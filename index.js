@@ -548,55 +548,6 @@ async function fetchTrending() {
   }
 }
 // ─── WHALE TRACKER ────────────────────────────────────────────────────────────
-async function fetchWhaleTransfers(chain, address, ticker) {
-  try {
-    if (chain === 'sol') {
-      const res = await fetchWithRetry(
-        `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0', id: 1,
-            method: 'getSignaturesForAddress',
-            params: [address, { limit: 20 }],
-          }),
-        }
-      );
-      const data = await res.json();
-      const sigs = (data.result || []).slice(0, 5);
-      if (sigs.length === 0) return '⚠️ No recent transactions found.';
-      return sigs.map((s, i) =>
-        `${i + 1}. \`${s.signature.slice(0, 16)}...\` — ${new Date(s.blockTime * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`
-      ).join('\n') + '\n\n_Full amounts require a Helius paid plan._';
-    }
-
-    // Try Moralis first for ETH/BSC
-    if (moralisKey) {
-      const chainId = chain === 'eth' ? 'eth' : 'bsc';
-      const res = await fetchWithRetry(
-        `https://deep-index.moralis.io/api/v2.2/erc20/${address}/transfers?chain=${chainId}&limit=50`,
-        { headers: { 'X-API-Key': moralisKey, 'Accept': 'application/json' } }
-      );
-      const data = await res.json();
-      const txs = data?.result;
-      if (Array.isArray(txs) && txs.length > 0) {
-        const parsed = txs.map((tx) => ({
-          from:  tx.from_address,
-          to:    tx.to_address,
-          value: parseFloat(tx.value) / Math.pow(10, parseInt(tx.token_decimals || 18)),
-          time:  new Date(tx.block_timestamp),
-          hash:  tx.transaction_hash,
-        }));
-        const whales = parsed.sort((a, b) => b.value - a.value).slice(0, 5);
-        return whales.map((tx, i) => {
-          const val = tx.value >= 1e6 ? `${(tx.value / 1e6).toFixed(2)}M`
-                    : tx.value >= 1e3 ? `${(tx.value / 1e3).toFixed(2)}K`
-                    : tx.value.toFixed(2);
-          return `${i + 1}. 🐋 ${val} ${ticker}\n   From: \`${tx.from.slice(0, 8)}...\` → \`${tx.to.slice(0, 8)}...\`\n   ${tx.time.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
-        }).join('\n\n');
-      }
-    }
 
 async function fetchWhaleTransfers(chain, address, ticker) {
   try {
