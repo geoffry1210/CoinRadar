@@ -525,7 +525,7 @@ async function fetchTrending() {
   }
   try {
     const res = await fetchWithRetry(
-      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/trending/gainers-losers?limit=10&time_period=24h',
+    'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?limit=10&sort=percent_change_24h&sort_dir=desc&convert=USD',
       { headers: { 'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY, 'Accept': 'application/json' } }
     );
     const data = await res.json();
