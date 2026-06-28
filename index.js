@@ -519,7 +519,6 @@ async function fetchPrice(ticker) {
 
 // ─── TRENDING ─────────────────────────────────────────────────────────────────
 
-async function refreshTrendingCache() {
 async function fetchTrending() {
   if (trendingCache && Date.now() - trendingCacheTime < TRENDING_CACHE_TTL) {
     return trendingCache;
