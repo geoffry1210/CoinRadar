@@ -426,7 +426,6 @@ function assessConcentrationRisk(top10Pct) {
 
 // ─── CHART ────────────────────────────────────────────────────────────────────
 
-const chartJSNodeCanvas = new ChartJSNodeCanvas({ width: 800, height: 600 });
 
 async function generatePieChartUrl(holders, top10Total, ticker) {
   const labels = holders.map((_, i) => `Wallet ${i + 1}`);
