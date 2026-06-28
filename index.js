@@ -525,11 +525,13 @@ async function fetchTrending() {
   }
   try {
     const res = await fetchWithRetry(
-    'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?limit=10&sort=percent_change_24h&sort_dir=desc&convert=USD',
+      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?limit=10&sort=percent_change_24h&sort_dir=desc&convert=USD',
       { headers: { 'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY, 'Accept': 'application/json' } }
     );
     const data = await res.json();
-    if (!data?.data?.length) throw new Error('No CMC data');
+    console.log('CMC response status:', data?.status);
+    console.log('CMC error:', data?.status?.error_message);
+    if (!data?.data?.length) throw new Error(`No CMC data: ${JSON.stringify(data?.status)}`);
     trendingCache = data.data.map((c, i) => ({
       rank:      i + 1,
       name:      c.name,
