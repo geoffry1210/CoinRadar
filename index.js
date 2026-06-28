@@ -366,7 +366,24 @@ async function getSolTopHolders(address) {
   }));
 }
 
-async function getTotalSupply(chain, address) {
+ async function getTotalSupply(chain, address) {
+  try {
+    // Try DexScreener first — most reliable
+    const res = await fetchWithRetry(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
+    const data = await res.json();
+    const pairs = data?.pairs || [];
+    if (pairs.length > 0) {
+      const fdv = pairs[0].fdv;
+      const price = parseFloat(pairs[0].priceUsd || 0);
+      if (fdv && price > 0) {
+        const supply = fdv / price;
+        if (supply > 0) return supply;
+      }
+    }
+  } catch (err) {
+    console.error('DexScreener supply fetch failed:', err.message);
+  }
+
   try {
     if (chain === 'sol') {
       const res = await fetchWithRetry(
@@ -389,11 +406,12 @@ async function getTotalSupply(chain, address) {
         const decimals = parseInt(dd.result?.[0]?.decimals || 18);
         return parseFloat(data.result) / Math.pow(10, decimals);
       }
-      return null;
     }
   } catch (err) {
-    return null;
+    console.error('Chain supply fetch failed:', err.message);
   }
+
+  return null;
 }
 
 async function getTopHoldersWithPercentage(chain, address) {
@@ -434,7 +452,7 @@ function generatePieChartUrl(holders, top10Total, ticker) {
   const labels = holders.map((_, i) => `Wallet ${i + 1}`);
   const dataValues = holders.map((h) => parseFloat(h.percentage.toFixed(2)));
   const otherPct = parseFloat(Math.max(0, 100 - top10Total).toFixed(2));
-  if (otherPct > 0) { labels.push('Rest of Holders'); dataValues.push(otherPct); }
+  if (otherPct > 0) { labels.push('Others'); dataValues.push(otherPct); }
 
   const colors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#98D8C8','#F7DC6F','#BB8FCE','#85C1E2','#F8B739','#52B788','#E0E0E0'];
 
@@ -445,10 +463,16 @@ function generatePieChartUrl(holders, top10Total, ticker) {
       datasets: [{ data: dataValues, backgroundColor: colors.slice(0, labels.length), borderColor: '#1a1a2e', borderWidth: 2 }],
     },
     options: {
-      cutoutPercentage: 60,
+      cutoutPercentage: 65,
       plugins: {
-        legend: { position: 'bottom', labels: { fontColor: '#ffffff', fontSize: 12, padding: 15 } },
-        title: { display: true, text: `${ticker} — Top 10 Wallets`, fontColor: '#ffffff', fontSize: 16 },
+        legend: { position: 'bottom', labels: { fontColor: '#ffffff', fontSize: 11, padding: 10 } },
+        title: { display: true, text: `${ticker} — Top 10 Holder Distribution`, fontColor: '#ffffff', fontSize: 15 },
+        doughnutlabel: {
+          labels: [
+            { text: `${top10Total.toFixed(1)}%`, font: { size: 38, weight: 'bold' }, color: '#ffffff' },
+            { text: 'Top 10', font: { size: 14 }, color: '#aaaaaa' },
+          ],
+        },
       },
     },
   };
@@ -456,7 +480,6 @@ function generatePieChartUrl(holders, top10Total, ticker) {
   const encoded = encodeURIComponent(JSON.stringify(chartConfig));
   return `https://quickchart.io/chart?c=${encoded}&backgroundColor=%231a1a2e&width=800&height=600`;
 }
-
 
 // ─── PRICE LOOKUP ─────────────────────────────────────────────────────────────
 
