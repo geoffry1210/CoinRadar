@@ -520,31 +520,30 @@ async function fetchPrice(ticker) {
 // ─── TRENDING ─────────────────────────────────────────────────────────────────
 
 async function refreshTrendingCache() {
-  try {
-    const res = await fetch('https://api.coingecko.com/api/v3/search/trending');
-    const data = await res.json();
-    if (!data?.coins?.length) return;
-    trendingCache = data.coins.slice(0, 10).map((entry, i) => {
-      const c = entry.coin;
-      return {
-        rank:      i + 1,
-        name:      c.name,
-        symbol:    c.symbol?.toUpperCase(),
-        change24h: c.data?.price_change_percentage_24h?.usd,
-        price:     c.data?.price,
-      };
-    });
-    trendingCacheTime = Date.now();
-    console.log('✅ Trending cache refreshed');
-  } catch (err) {
-    console.error('Trending cache refresh failed:', err.message);
-  }
-}
-
 async function fetchTrending() {
-  if (trendingCache) return trendingCache;
-  await refreshTrendingCache();
-  return trendingCache;
+  if (trendingCache && Date.now() - trendingCacheTime < TRENDING_CACHE_TTL) {
+    return trendingCache;
+  }
+  try {
+    const res = await fetchWithRetry(
+      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/trending/gainers-losers?limit=10&time_period=24h',
+      { headers: { 'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY, 'Accept': 'application/json' } }
+    );
+    const data = await res.json();
+    if (!data?.data?.length) throw new Error('No CMC data');
+    trendingCache = data.data.map((c, i) => ({
+      rank:      i + 1,
+      name:      c.name,
+      symbol:    c.symbol,
+      change24h: c.quote?.USD?.percent_change_24h,
+      price:     c.quote?.USD?.price,
+    }));
+    trendingCacheTime = Date.now();
+    return trendingCache;
+  } catch (err) {
+    console.error('Trending fetch failed:', err.message);
+    return trendingCache || null;
+  }
 }
 // ─── WHALE TRACKER ────────────────────────────────────────────────────────────
 
@@ -924,11 +923,13 @@ bot.onText(/\/trending/, async (msg) => {
     return bot.sendMessage(chatId, '⚠️ Could not fetch trending data right now. Try again shortly.');
   }
 
-  const lines = coins.map((c, i) =>
-    `${i + 1}. *${c.name}* — ${c.chain.toUpperCase()}\n   \`${c.addr.slice(0, 10)}...\``
-  ).join('\n\n');
+  const lines = coins.map((c, i) => {
+    const changeStr = c.change24h != null ? ` (${c.change24h >= 0 ? '+' : ''}${c.change24h.toFixed(1)}%)` : '';
+    const priceStr  = c.price ? ` — $${parseFloat(c.price).toLocaleString(undefined, { maximumSignificantDigits: 4 })}` : '';
+    return `${i + 1}. *${c.name}* (${c.symbol})${priceStr}${changeStr}`;
+  }).join('\n');
 
-  bot.sendMessage(chatId, `🔥 *Latest Token Launches on DexScreener*\n\n${lines}`, { parse_mode: 'Markdown' });
+  bot.sendMessage(chatId, `🔥 *Top Gainers (24h)*\n\n${lines}`, { parse_mode: 'Markdown' });
 });
 
 // ─── /whale ───────────────────────────────────────────────────────────────────
