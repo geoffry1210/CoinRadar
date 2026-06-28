@@ -14,7 +14,7 @@ const fetch = require('node-fetch');
 const { Pool } = require('pg');
 let trendingCache = null;
 let trendingCacheTime = 0;
-const TRENDING_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const TRENDING_CACHE_TTL = 10 * 60 * 1000;
 
 // ─── DB ──────────────────────────────────────────────────────────────────────
 
@@ -519,36 +519,32 @@ async function fetchPrice(ticker) {
 
 // ─── TRENDING ─────────────────────────────────────────────────────────────────
 
-async function fetchTrending() {
-  if (trendingCache && Date.now() - trendingCacheTime < TRENDING_CACHE_TTL) {
-    return trendingCache;
-  }
+async function refreshTrendingCache() {
   try {
-    const res = await fetchWithRetry('https://api.dexscreener.com/token-profiles/latest/v1');
+    const res = await fetch('https://api.coingecko.com/api/v3/search/trending');
     const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) throw new Error('No data');
-    const seen = new Set();
-    const coins = [];
-    for (const entry of data) {
-      const symbol = entry.header || entry.tokenAddress?.slice(0, 8) || '???';
-      if (seen.has(symbol)) continue;
-      seen.add(symbol);
-      coins.push({
-        rank:   coins.length + 1,
-        name:   entry.header || 'Unknown',
-        symbol: symbol.toUpperCase(),
-        chain:  entry.chainId || '',
-        addr:   entry.tokenAddress || '',
-      });
-      if (coins.length >= 10) break;
-    }
-    trendingCache = coins;
+    if (!data?.coins?.length) return;
+    trendingCache = data.coins.slice(0, 10).map((entry, i) => {
+      const c = entry.coin;
+      return {
+        rank:      i + 1,
+        name:      c.name,
+        symbol:    c.symbol?.toUpperCase(),
+        change24h: c.data?.price_change_percentage_24h?.usd,
+        price:     c.data?.price,
+      };
+    });
     trendingCacheTime = Date.now();
-    return coins;
+    console.log('✅ Trending cache refreshed');
   } catch (err) {
-    console.error('Trending fetch failed:', err.message);
-    return trendingCache || null;
+    console.error('Trending cache refresh failed:', err.message);
   }
+}
+
+async function fetchTrending() {
+  if (trendingCache) return trendingCache;
+  await refreshTrendingCache();
+  return trendingCache;
 }
 // ─── WHALE TRACKER ────────────────────────────────────────────────────────────
 
@@ -1080,6 +1076,9 @@ bot.onText(/\/broadcast (.+)/, async (msg, match) => {
 checkBybitListings();
 setInterval(checkBybitListings, 5 * 60 * 1000);
 
+//_------------------trending polling-------------------
+refreshTrendingCache();
+setInterval(refreshTrendingCache, 10 * 60 * 1000);
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 
 console.log('📡 CoinRadar bot is running...');
