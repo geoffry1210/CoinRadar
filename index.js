@@ -524,18 +524,24 @@ async function fetchTrending() {
     return trendingCache;
   }
   try {
-    const res = await fetchWithRetry('https://api.dexscreener.com/token-boosts/top/v1');
+    const res = await fetchWithRetry('https://api.dexscreener.com/token-profiles/latest/v1');
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) throw new Error('No data');
-    const coins = data.slice(0, 10).map((entry, i) => ({
-      rank:      i + 1,
-      name:      entry.description || entry.tokenAddress?.slice(0, 8) || 'Unknown',
-      symbol:    entry.tokenAddress?.slice(0, 6).toUpperCase() || '???',
-      change24h: null,
-      price:     null,
-      chain:     entry.chainId || '',
-      url:       entry.url || '',
-    }));
+    const seen = new Set();
+    const coins = [];
+    for (const entry of data) {
+      const symbol = entry.header || entry.tokenAddress?.slice(0, 8) || '???';
+      if (seen.has(symbol)) continue;
+      seen.add(symbol);
+      coins.push({
+        rank:   coins.length + 1,
+        name:   entry.header || 'Unknown',
+        symbol: symbol.toUpperCase(),
+        chain:  entry.chainId || '',
+        addr:   entry.tokenAddress || '',
+      });
+      if (coins.length >= 10) break;
+    }
     trendingCache = coins;
     trendingCacheTime = Date.now();
     return coins;
@@ -923,10 +929,10 @@ bot.onText(/\/trending/, async (msg) => {
   }
 
   const lines = coins.map((c, i) =>
-    `${i + 1}. *${c.name}* (${c.chain.toUpperCase()})`
-  ).join('\n');
+    `${i + 1}. *${c.name}* — ${c.chain.toUpperCase()}\n   \`${c.addr.slice(0, 10)}...\``
+  ).join('\n\n');
 
-  bot.sendMessage(chatId, `🔥 *Trending & Most Boosted on DexScreener*\n\n${lines}`, { parse_mode: 'Markdown' });
+  bot.sendMessage(chatId, `🔥 *Latest Token Launches on DexScreener*\n\n${lines}`, { parse_mode: 'Markdown' });
 });
 
 // ─── /whale ───────────────────────────────────────────────────────────────────
