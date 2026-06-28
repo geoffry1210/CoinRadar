@@ -524,26 +524,24 @@ async function fetchTrending() {
     return trendingCache;
   }
   try {
-    const res = await fetchWithRetry(
-  'https://api.coingecko.com/api/v3/search/trending'
-);
+    const res = await fetchWithRetry('https://api.dexscreener.com/token-boosts/top/v1');
     const data = await res.json();
-    const coins = (data?.coins || []).slice(0, 10).map((entry) => {
-      const c = entry.coin;
-      return {
-        rank:      c.market_cap_rank,
-        name:      c.name,
-        symbol:    c.symbol?.toUpperCase(),
-        change24h: c.data?.price_change_percentage_24h?.usd,
-        price:     c.data?.price,
-      };
-    });
+    if (!Array.isArray(data) || data.length === 0) throw new Error('No data');
+    const coins = data.slice(0, 10).map((entry, i) => ({
+      rank:      i + 1,
+      name:      entry.description || entry.tokenAddress?.slice(0, 8) || 'Unknown',
+      symbol:    entry.tokenAddress?.slice(0, 6).toUpperCase() || '???',
+      change24h: null,
+      price:     null,
+      chain:     entry.chainId || '',
+      url:       entry.url || '',
+    }));
     trendingCache = coins;
     trendingCacheTime = Date.now();
     return coins;
   } catch (err) {
     console.error('Trending fetch failed:', err.message);
-    return trendingCache || null; // return stale cache if available
+    return trendingCache || null;
   }
 }
 // ─── WHALE TRACKER ────────────────────────────────────────────────────────────
@@ -924,13 +922,11 @@ bot.onText(/\/trending/, async (msg) => {
     return bot.sendMessage(chatId, '⚠️ Could not fetch trending data right now. Try again shortly.');
   }
 
-  const lines = coins.map((c, i) => {
-    const changeStr = c.change24h != null ? ` (${c.change24h >= 0 ? '+' : ''}${c.change24h.toFixed(1)}%)` : '';
-    const priceStr  = c.price ? ` — $${parseFloat(c.price).toLocaleString(undefined, { maximumSignificantDigits: 4 })}` : '';
-    return `${i + 1}. *${c.name}* (${c.symbol})${priceStr}${changeStr}`;
-  }).join('\n');
+  const lines = coins.map((c, i) =>
+    `${i + 1}. *${c.name}* (${c.chain.toUpperCase()})`
+  ).join('\n');
 
-  bot.sendMessage(chatId, `🔥 *Trending Now on CoinGecko*\n\n${lines}`, { parse_mode: 'Markdown' });
+  bot.sendMessage(chatId, `🔥 *Trending & Most Boosted on DexScreener*\n\n${lines}`, { parse_mode: 'Markdown' });
 });
 
 // ─── /whale ───────────────────────────────────────────────────────────────────
