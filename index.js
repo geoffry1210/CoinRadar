@@ -1076,9 +1076,6 @@ bot.onText(/\/broadcast (.+)/, async (msg, match) => {
 checkBybitListings();
 setInterval(checkBybitListings, 5 * 60 * 1000);
 
-//_------------------trending polling-------------------
-refreshTrendingCache();
-setInterval(refreshTrendingCache, 10 * 60 * 1000);
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 
 console.log('📡 CoinRadar bot is running...');
