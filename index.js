@@ -152,12 +152,12 @@ async function setPaidChat(chatId, expiry) {
 
 async function getTokenContract(ticker) {
   try {
-    const res = await fetchWithRetry(
+    const searchRes = await fetchWithRetry(
       `https://api.coingecko.com/api/v3/search?query=${ticker}`,
       { headers: { 'x-cg-demo-api-key': coingeckoKey } }
     );
-    const data = await res.json();
-    const coin = data?.coins?.find((c) => c.symbol.toUpperCase() === ticker.toUpperCase());
+    const searchData = await searchRes.json();
+    const coin = searchData?.coins?.find((c) => c.symbol.toUpperCase() === ticker.toUpperCase());
     if (!coin) return null;
 
     const detailRes = await fetchWithRetry(
@@ -165,16 +165,46 @@ async function getTokenContract(ticker) {
       { headers: { 'x-cg-demo-api-key': coingeckoKey } }
     );
     const detail = await detailRes.json();
-    const platforms    = detail?.platforms || {};
-    const logoImage    = detail?.image?.large || detail?.image?.small || null;
-    const totalSupply  = detail?.market_data?.total_supply || detail?.market_data?.circulating_supply || null;
-    const coingeckoId  = coin.id;
+    const platforms   = detail?.platforms || {};
+    const logoImage   = detail?.image?.large || detail?.image?.small || null;
+    const totalSupply = detail?.market_data?.total_supply || detail?.market_data?.circulating_supply || null;
+    const coingeckoId = coin.id;
 
-    if (platforms['ethereum'])          return { chain: 'eth', address: platforms['ethereum'],          logoImage, totalSupply, coingeckoId };
-    if (platforms['binance-smart-chain']) return { chain: 'bsc', address: platforms['binance-smart-chain'], logoImage, totalSupply, coingeckoId };
-    if (platforms['solana'])            return { chain: 'sol', address: platforms['solana'],            logoImage, totalSupply, coingeckoId };
-    // Coin exists on CoinGecko but no on-chain address found — return partial for price
-    return { chain: null, address: null, logoImage, totalSupply, coingeckoId };
+    // Build list of all available chains
+    const chainMap = {
+      'ethereum': 'eth',
+      'binance-smart-chain': 'bsc',
+      'solana': 'sol',
+    };
+    const candidates = [];
+    for (const [platform, chain] of Object.entries(chainMap)) {
+      if (platforms[platform]) {
+        candidates.push({ chain, address: platforms[platform] });
+      }
+    }
+
+    if (candidates.length === 0) {
+      return { chain: null, address: null, logoImage, totalSupply, coingeckoId };
+    }
+
+    if (candidates.length === 1) {
+      return { ...candidates[0], logoImage, totalSupply, coingeckoId };
+    }
+
+    // Multiple chains — pick the one with highest liquidity on DexScreener
+    let best = candidates[0];
+    let bestLiq = 0;
+    for (const candidate of candidates) {
+      try {
+        const r = await fetchWithRetry(`https://api.dexscreener.com/latest/dex/tokens/${candidate.address}`);
+        const d = await r.json();
+        const pairs = d?.pairs || [];
+        const liq = pairs.reduce((sum, p) => sum + (p.liquidity?.usd || 0), 0);
+        if (liq > bestLiq) { bestLiq = liq; best = candidate; }
+      } catch (_) {}
+    }
+    return { ...best, logoImage, totalSupply, coingeckoId };
+
   } catch (err) {
     console.error('CoinGecko lookup failed:', err.message);
     return null;
