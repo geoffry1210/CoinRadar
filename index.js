@@ -12,10 +12,6 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const fetch = require('node-fetch');
 const { Pool } = require('pg');
-const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
 
 // ─── DB ──────────────────────────────────────────────────────────────────────
 
@@ -432,44 +428,32 @@ function assessConcentrationRisk(top10Pct) {
 
 const chartJSNodeCanvas = new ChartJSNodeCanvas({ width: 800, height: 600 });
 
-async function generatePieChart(holders, top10Total, ticker) {
-  const labels     = holders.map((_, i) => `Wallet ${i + 1}`);
-  const dataValues = holders.map((h) => h.percentage);
-  const otherPct   = Math.max(0, 100 - top10Total);
+async function generatePieChartUrl(holders, top10Total, ticker) {
+  const labels = holders.map((_, i) => `Wallet ${i + 1}`);
+  const dataValues = holders.map((h) => parseFloat(h.percentage.toFixed(2)));
+  const otherPct = parseFloat(Math.max(0, 100 - top10Total).toFixed(2));
   if (otherPct > 0) { labels.push('Rest of Holders'); dataValues.push(otherPct); }
 
   const colors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#98D8C8','#F7DC6F','#BB8FCE','#85C1E2','#F8B739','#52B788','#E0E0E0'];
 
-  const config = {
+  const chartConfig = {
     type: 'doughnut',
     data: {
       labels,
       datasets: [{ data: dataValues, backgroundColor: colors.slice(0, labels.length), borderColor: '#1a1a2e', borderWidth: 2 }],
     },
     options: {
-      responsive: true,
-      cutout: '60%',
-      backgroundColor: '#1a1a2e',
+      cutoutPercentage: 60,
       plugins: {
-        legend:  { position: 'bottom', labels: { color: '#ffffff', font: { size: 12 }, padding: 15 } },
-        title:   { display: true, text: `${ticker} — Top 10 Wallets Distribution`, color: '#ffffff', font: { size: 18, weight: 'bold' }, padding: { top: 20, bottom: 20 } },
-        tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${(ctx.parsed || 0).toFixed(2)}%` } },
+        legend: { position: 'bottom', labels: { fontColor: '#ffffff', fontSize: 12, padding: 15 } },
+        title: { display: true, text: `${ticker} — Top 10 Wallets`, fontColor: '#ffffff', fontSize: 16 },
       },
     },
-    plugins: [{
-      id: 'centerText',
-      afterDraw: (chart) => {
-        const { ctx, chartArea: { top, bottom, left, right } } = chart;
-        const cx = (left + right) / 2, cy = (top + bottom) / 2;
-        ctx.save();
-        ctx.font = 'bold 42px Arial'; ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(`${top10Total.toFixed(1)}%`, cx, cy - 15);
-        ctx.font = '16px Arial'; ctx.fillStyle = '#aaaaaa';
-        ctx.fillText('TOP 10 HOLD', cx, cy + 20);
-        ctx.restore();
-      },
-    }],
   };
+
+  const encoded = encodeURIComponent(JSON.stringify(chartConfig));
+  return `https://quickchart.io/chart?c=${encoded}&backgroundColor=%231a1a2e&width=800&height=600`;
+}
 
   const imageBuffer = await chartJSNodeCanvas.renderToBuffer(config);
   const tmpDir = path.join(__dirname, 'tmp');
@@ -849,7 +833,7 @@ bot.onText(/\/w (.+)/, async (msg, match) => {
 
     const { holders, top10Total, totalSupply } = await getTopHoldersWithPercentage(contract.chain, contract.address);
     const risk      = assessConcentrationRisk(top10Total);
-    const chartPath = await generatePieChart(holders, top10Total, ticker);
+    const chartUrl = generatePieChartUrl(holders, top10Total, ticker);
 
     const holderLines = holders.slice(0, 5).map((h, i) =>
       `  ${i + 1}. \`${h.address.slice(0, 6)}...${h.address.slice(-4)}\` — ${h.percentage.toFixed(2)}%`
@@ -862,8 +846,7 @@ bot.onText(/\/w (.+)/, async (msg, match) => {
       `Top 5 wallets:\n${holderLines}\n\n` +
       `*${risk.level}*\n${risk.description}`;
 
-    await bot.sendPhoto(chatId, chartPath, { caption, parse_mode: 'Markdown' });
-    try { fs.unlinkSync(chartPath); } catch (_) {}
+    await bot.sendPhoto(chatId, chartUrl, { caption, parse_mode: 'Markdown' });
   } catch (err) {
     console.error('/w error:', err.message);
     bot.sendMessage(chatId, `⚠️ Failed to analyze ${ticker}. Possible cause: API limit, token too new, or unsupported chain.`);
