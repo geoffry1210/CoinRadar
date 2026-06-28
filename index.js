@@ -524,21 +524,21 @@ async function fetchTrending() {
     return trendingCache;
   }
   try {
-    const res = await fetchWithRetry(
-      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?limit=10&sort=percent_change_24h&sort_dir=desc&convert=USD',
-      { headers: { 'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY, 'Accept': 'application/json' } }
-    );
-    const data = await res.json();
-    console.log('CMC response status:', data?.status);
-    console.log('CMC error:', data?.status?.error_message);
-    if (!data?.data?.length) throw new Error(`No CMC data: ${JSON.stringify(data?.status)}`);
-    trendingCache = data.data.map((c, i) => ({
-      rank:      i + 1,
-      name:      c.name,
-      symbol:    c.symbol,
-      change24h: c.quote?.USD?.percent_change_24h,
-      price:     c.quote?.USD?.price,
-    }));
+    const res = await fetch('https://api.coingecko.com/api/v3/search/trending');
+    const text = await res.text();
+    console.log('Trending raw response:', text.slice(0, 200));
+    const data = JSON.parse(text);
+    if (!data?.coins?.length) throw new Error('No coins in response');
+    trendingCache = data.coins.slice(0, 10).map((entry, i) => {
+      const c = entry.coin;
+      return {
+        rank:      i + 1,
+        name:      c.name,
+        symbol:    c.symbol?.toUpperCase(),
+        change24h: c.data?.price_change_percentage_24h?.usd,
+        price:     c.data?.price,
+      };
+    });
     trendingCacheTime = Date.now();
     return trendingCache;
   } catch (err) {
