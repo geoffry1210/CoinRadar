@@ -427,7 +427,7 @@ function assessConcentrationRisk(top10Pct) {
 // ─── CHART ────────────────────────────────────────────────────────────────────
 
 
-async function generatePieChartUrl(holders, top10Total, ticker) {
+function generatePieChartUrl(holders, top10Total, ticker) {
   const labels = holders.map((_, i) => `Wallet ${i + 1}`);
   const dataValues = holders.map((h) => parseFloat(h.percentage.toFixed(2)));
   const otherPct = parseFloat(Math.max(0, 100 - top10Total).toFixed(2));
@@ -454,13 +454,6 @@ async function generatePieChartUrl(holders, top10Total, ticker) {
   return `https://quickchart.io/chart?c=${encoded}&backgroundColor=%231a1a2e&width=800&height=600`;
 }
 
-  const imageBuffer = await chartJSNodeCanvas.renderToBuffer(config);
-  const tmpDir = path.join(__dirname, 'tmp');
-  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
-  const filePath = path.join(tmpDir, `chart_${ticker}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.png`);
-  await fs.promises.writeFile(filePath, imageBuffer);
-  return filePath;
-}
 
 // ─── PRICE LOOKUP ─────────────────────────────────────────────────────────────
 
