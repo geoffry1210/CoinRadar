@@ -12,6 +12,9 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const fetch = require('node-fetch');
 const { Pool } = require('pg');
+let trendingCache = null;
+let trendingCacheTime = 0;
+const TRENDING_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 // ─── DB ──────────────────────────────────────────────────────────────────────
 
@@ -517,13 +520,16 @@ async function fetchPrice(ticker) {
 // ─── TRENDING ─────────────────────────────────────────────────────────────────
 
 async function fetchTrending() {
+  if (trendingCache && Date.now() - trendingCacheTime < TRENDING_CACHE_TTL) {
+    return trendingCache;
+  }
   try {
     const res = await fetchWithRetry(
       'https://api.coingecko.com/api/v3/search/trending',
       { headers: { 'x-cg-demo-api-key': coingeckoKey } }
     );
     const data = await res.json();
-    return (data?.coins || []).slice(0, 10).map((entry) => {
+    const coins = (data?.coins || []).slice(0, 10).map((entry) => {
       const c = entry.coin;
       return {
         rank:      c.market_cap_rank,
@@ -533,18 +539,18 @@ async function fetchTrending() {
         price:     c.data?.price,
       };
     });
+    trendingCache = coins;
+    trendingCacheTime = Date.now();
+    return coins;
   } catch (err) {
     console.error('Trending fetch failed:', err.message);
-    return null;
+    return trendingCache || null; // return stale cache if available
   }
 }
-
 // ─── WHALE TRACKER ────────────────────────────────────────────────────────────
-
 async function fetchWhaleTransfers(chain, address, ticker) {
   try {
     if (chain === 'sol') {
-      // Helius: get recent token transfers
       const res = await fetchWithRetry(
         `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`,
         {
@@ -562,10 +568,37 @@ async function fetchWhaleTransfers(chain, address, ticker) {
       if (sigs.length === 0) return '⚠️ No recent transactions found.';
       return sigs.map((s, i) =>
         `${i + 1}. \`${s.signature.slice(0, 16)}...\` — ${new Date(s.blockTime * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`
-      ).join('\n') + `\n\n_Note: Full whale amounts require a Helius paid plan._`;
+      ).join('\n') + '\n\n_Full amounts require a Helius paid plan._';
     }
 
-    // ETH / BSC: use Etherscan token transfer events, filter large ones
+    // Try Moralis first for ETH/BSC
+    if (moralisKey) {
+      const chainId = chain === 'eth' ? 'eth' : 'bsc';
+      const res = await fetchWithRetry(
+        `https://deep-index.moralis.io/api/v2.2/erc20/${address}/transfers?chain=${chainId}&limit=50`,
+        { headers: { 'X-API-Key': moralisKey, 'Accept': 'application/json' } }
+      );
+      const data = await res.json();
+      const txs = data?.result;
+      if (Array.isArray(txs) && txs.length > 0) {
+        const parsed = txs.map((tx) => ({
+          from:  tx.from_address,
+          to:    tx.to_address,
+          value: parseFloat(tx.value) / Math.pow(10, parseInt(tx.token_decimals || 18)),
+          time:  new Date(tx.block_timestamp),
+          hash:  tx.transaction_hash,
+        }));
+        const whales = parsed.sort((a, b) => b.value - a.value).slice(0, 5);
+        return whales.map((tx, i) => {
+          const val = tx.value >= 1e6 ? `${(tx.value / 1e6).toFixed(2)}M`
+                    : tx.value >= 1e3 ? `${(tx.value / 1e3).toFixed(2)}K`
+                    : tx.value.toFixed(2);
+          return `${i + 1}. 🐋 ${val} ${ticker}\n   From: \`${tx.from.slice(0, 8)}...\` → \`${tx.to.slice(0, 8)}...\`\n   ${tx.time.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+        }).join('\n\n');
+      }
+    }
+
+    // Fallback to Etherscan
     const baseUrl = chain === 'eth' ? 'https://api.etherscan.io/api' : 'https://api.bscscan.com/api';
     const res = await fetchWithRetry(
       `${baseUrl}?module=account&action=tokentx&contractaddress=${address}&page=1&offset=50&sort=desc&apikey=${etherscanKey}`
@@ -573,23 +606,21 @@ async function fetchWhaleTransfers(chain, address, ticker) {
     const data = await res.json();
     const txs = data?.result;
     if (!Array.isArray(txs) || txs.length === 0) return '⚠️ No recent transfers found.';
-
     const decimals = parseInt(txs[0]?.tokenDecimal || 18);
     const parsed = txs.map((tx) => ({
-      from:   tx.from,
-      to:     tx.to,
-      value:  parseFloat(tx.value) / Math.pow(10, decimals),
-      time:   new Date(Number(tx.timeStamp) * 1000),
-      hash:   tx.hash,
+      from:  tx.from,
+      to:    tx.to,
+      value: parseFloat(tx.value) / Math.pow(10, decimals),
+      time:  new Date(Number(tx.timeStamp) * 1000),
     }));
-
-    // Rough whale filter: top 5 by value
     const whales = parsed.sort((a, b) => b.value - a.value).slice(0, 5);
-
     return whales.map((tx, i) => {
-      const val = tx.value >= 1e6 ? `${(tx.value / 1e6).toFixed(2)}M` : tx.value >= 1e3 ? `${(tx.value / 1e3).toFixed(2)}K` : tx.value.toFixed(2);
+      const val = tx.value >= 1e6 ? `${(tx.value / 1e6).toFixed(2)}M`
+                : tx.value >= 1e3 ? `${(tx.value / 1e3).toFixed(2)}K`
+                : tx.value.toFixed(2);
       return `${i + 1}. 🐋 ${val} ${ticker}\n   From: \`${tx.from.slice(0, 8)}...\` → \`${tx.to.slice(0, 8)}...\`\n   ${tx.time.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
     }).join('\n\n');
+
   } catch (err) {
     console.error('Whale fetch failed:', err.message);
     return '❓ Could not fetch whale data.';
