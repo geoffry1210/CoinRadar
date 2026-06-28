@@ -525,9 +525,8 @@ async function fetchTrending() {
   }
   try {
     const res = await fetchWithRetry(
-      'https://api.coingecko.com/api/v3/search/trending',
-      { headers: { 'x-cg-demo-api-key': coingeckoKey } }
-    );
+  'https://api.coingecko.com/api/v3/search/trending'
+);
     const data = await res.json();
     const coins = (data?.coins || []).slice(0, 10).map((entry) => {
       const c = entry.coin;
