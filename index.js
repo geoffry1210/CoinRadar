@@ -192,23 +192,16 @@ async function getTokenContract(ticker) {
     }
 
     // Multiple chains — pick the one with highest liquidity on DexScreener
-    // Multiple chains — pick the one with highest liquidity, checked in parallel
-    const results = await Promise.allSettled(
-      candidates.map(async (candidate) => {
-        const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${candidate.address}`);
+    let best = candidates[0];
+    let bestLiq = 0;
+    for (const candidate of candidates) {
+      try {
+        const r = await fetchWithRetry(`https://api.dexscreener.com/latest/dex/tokens/${candidate.address}`);
         const d = await r.json();
         const pairs = d?.pairs || [];
         const liq = pairs.reduce((sum, p) => sum + (p.liquidity?.usd || 0), 0);
-        return { candidate, liq };
-      })
-    );
-    let best = candidates[0];
-    let bestLiq = 0;
-    for (const result of results) {
-      if (result.status === 'fulfilled' && result.value.liq > bestLiq) {
-        bestLiq = result.value.liq;
-        best = result.value.candidate;
-      }
+        if (liq > bestLiq) { bestLiq = liq; best = candidate; }
+      } catch (_) {}
     }
     return { ...best, logoImage, totalSupply, coingeckoId };
 
