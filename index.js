@@ -191,17 +191,23 @@ async function getTokenContract(ticker) {
       return { ...candidates[0], logoImage, totalSupply, coingeckoId };
     }
 
-    // Multiple chains — pick the one with highest liquidity on DexScreener
-    let best = candidates[0];
-    let bestLiq = 0;
-    for (const candidate of candidates) {
-      try {
-        const r = await fetchWithRetry(`https://api.dexscreener.com/latest/dex/tokens/${candidate.address}`);
+    // Multiple chains — pick the one with highest liquidity, checked in parallel
+    const results = await Promise.allSettled(
+      candidates.map(async (candidate) => {
+        const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${candidate.address}`);
         const d = await r.json();
         const pairs = d?.pairs || [];
         const liq = pairs.reduce((sum, p) => sum + (p.liquidity?.usd || 0), 0);
-        if (liq > bestLiq) { bestLiq = liq; best = candidate; }
-      } catch (_) {}
+        return { candidate, liq };
+      })
+    );
+    let best = candidates[0];
+    let bestLiq = 0;
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value.liq > bestLiq) {
+        bestLiq = result.value.liq;
+        best = result.value.candidate;
+      }
     }
     return { ...best, logoImage, totalSupply, coingeckoId };
 
@@ -385,14 +391,19 @@ async function getSolTopHolders(address) {
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenLargestAccounts', params: [address] }),
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1,
+        method: 'getTokenLargestAccounts',
+        params: [address, { commitment: 'finalized' }],
+      }),
     }
   );
   const data = await res.json();
-  if (!data.result?.value) throw new Error('No Solana data');
+  if (data.error) throw new Error(`Helius error: ${data.error.message}`);
+  if (!data.result?.value?.length) throw new Error('No Solana holder data returned');
   return data.result.value.slice(0, 10).map((a) => ({
     address: a.address,
-    balance: a.uiAmount || a.amount / Math.pow(10, 9),
+    balance: parseFloat(a.uiAmountString || a.uiAmount || 0),
   }));
 }
 
@@ -449,7 +460,14 @@ async function getTopHoldersWithPercentage(chain, address) {
   switch (chain) {
     case 'eth': holders = await getEthTopHolders(address); break;
     case 'bsc': holders = await getBscTopHolders(address); break;
-    case 'sol': holders = await getSolTopHolders(address); break;
+    case 'sol':
+      try {
+        holders = await getSolTopHolders(address);
+      } catch (err) {
+        console.error('Helius holder fetch failed:', err.message);
+        throw new Error('Could not fetch Solana holders — check Helius API key');
+      }
+      break;
     default: throw new Error('Unsupported chain');
   }
 
@@ -733,12 +751,15 @@ async function checkBybitListings() {
 
     const alreadySeen = await countSeenAnnouncements();
     if (alreadySeen === 0) {
-      for (const item of items) await markAnnouncementSeen(item.id);
+      for (const item of items) {
+        if (item.id) await markAnnouncementSeen(item.id);
+      }
       console.log(`Initialized with ${items.length} existing Bybit announcements.`);
       return;
     }
 
     for (const item of items) {
+      if (!item.id) continue;
       if (await hasSeenAnnouncement(item.id)) continue;
       await markAnnouncementSeen(item.id);
       listingsSeenToday++;
@@ -765,6 +786,7 @@ bot.deleteMyCommands()
     { command: 'c',        description: 'Safety check — /c pepe' },
     { command: 'w',        description: 'Top 10 holder chart — /w pepe' },
     { command: 'p',        description: 'Price lookup — /p pepe' },
+    { command: 'chart',    description: 'Price chart — /chart BTCUSDT BINANCE 1h' },
     { command: 'trending', description: 'Top trending tokens right now' },
     { command: 'whale',    description: 'Recent whale transfers — /whale pepe' },
     { command: 'upgrade',  description: 'Unlimited checks subscription' },
@@ -822,6 +844,7 @@ bot.onText(/\/start/, (msg) => {
     `*/c <ticker>* — Safety check (contract, liquidity, age, tx volume)\n` +
     `*/w <ticker>* — Top 10 holder concentration chart\n` +
     `*/p <ticker>* — Price, market cap, 24h change\n` +
+    `*/chart <ticker> <exchange> <tf>* — Live TradingView chart\n` +
     `*/trending*    — Top 10 trending tokens right now\n` +
     `*/whale <ticker>* — Recent large transfers\n\n` +
     `Free users get ${FREE_DAILY_LIMIT} checks/day. Use /upgrade for unlimited.\n` +
@@ -839,10 +862,13 @@ bot.onText(/\/help/, (msg) => {
     `*/c <ticker>*     — Safety check\n` +
     `*/w <ticker>*     — Holder concentration chart\n` +
     `*/p <ticker>*     — Price lookup\n` +
+    `*/chart <ticker> <exchange> <tf>* — Live chart\n` +
     `*/trending*       — Trending tokens\n` +
     `*/whale <ticker>* — Whale transfers\n` +
     `*/upgrade*        — Subscribe for unlimited checks\n` +
     `*/mystatus*       — Your subscription & usage\n\n` +
+    `Chart example: \`/chart BTCUSDT BINANCE 1h\`\n` +
+    `Timeframes: 1m 5m 15m 1h 4h 1D 1W\n\n` +
     `Free users: ${FREE_DAILY_LIMIT} checks/day across /c, /w, /p, and /whale.`,
     { parse_mode: 'Markdown' }
   );
@@ -1009,6 +1035,55 @@ bot.onText(/\/whale (.+)/, async (msg, match) => {
     `🐋 *Whale Transfers — ${ticker} (${contract.chain.toUpperCase()})*\n\n${result}`,
     { parse_mode: 'Markdown' }
   );
+});
+
+// ─── /chart ───────────────────────────────────────────────────────────────────
+
+bot.onText(/^\/chart$/, (msg) => bot.sendMessage(msg.chat.id, '📈 Usage: /chart <ticker> <exchange> <timeframe>\nExample: /chart BTCUSDT BINANCE 1h\n\nTimeframes: 1m 5m 15m 30m 1h 4h 1D 1W'));
+
+bot.onText(/\/chart (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const parts = match[1].trim().toUpperCase().split(/\s+/);
+
+  if (parts.length < 3) {
+    return bot.sendMessage(chatId, '📈 Usage: /chart <ticker> <exchange> <timeframe>\nExample: /chart BTCUSDT BINANCE 1h\n\nTimeframes: 1m 5m 15m 30m 1h 4h 1D 1W');
+  }
+
+  const [symbol, exchange, interval] = parts;
+
+  const validIntervals = ['1', '3', '5', '15', '30', '60', '120', '240', '1D', '1W', '1M'];
+  const intervalMap = {
+    '1M': '1', '3M': '3', '5M': '5', '15M': '15', '30M': '30',
+    '1H': '60', '2H': '120', '4H': '240', '1D': '1D', '1W': '1W',
+  };
+  const tvInterval = intervalMap[interval] || interval.replace('H', '0').replace('M', '');
+
+  bot.sendMessage(chatId, `📈 Fetching chart for *${symbol}* on *${exchange}* (${interval})...`, { parse_mode: 'Markdown' });
+
+  try {
+    const chartUrl = `https://api.chart-img.com/v1/tradingview/advanced-chart?symbol=${exchange}%3A${symbol}&interval=${tvInterval}&width=800&height=500&timezone=Etc%2FUTC&theme=dark&studies=["RSI","MACD"]`;
+
+    const res = await fetchWithRetry(chartUrl, {
+      headers: { 'x-api-key': process.env.CHARTIMG_API_KEY || '' },
+    });
+
+    if (!res.ok) throw new Error(`Chart API returned ${res.status}`);
+
+    const buffer = await res.buffer();
+    await bot.sendPhoto(chatId, buffer, {
+      caption: `📈 *${symbol}* — ${exchange} — ${interval}\n_Powered by TradingView_`,
+      parse_mode: 'Markdown',
+    });
+  } catch (err) {
+    console.error('/chart error:', err.message);
+    // Fallback: send TradingView link
+    const tvLink = `https://www.tradingview.com/chart/?symbol=${exchange}:${symbol}&interval=${tvInterval}`;
+    bot.sendMessage(
+      chatId,
+      `📈 *${symbol}* on *${exchange}* (${interval})\n\n🔗 [Open chart on TradingView](${tvLink})\n\n_Live screenshot not available — open the link to view the chart._`,
+      { parse_mode: 'Markdown', disable_web_page_preview: false }
+    );
+  }
 });
 
 // ─── /upgrade ─────────────────────────────────────────────────────────────────
