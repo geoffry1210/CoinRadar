@@ -948,7 +948,7 @@ bot.onText(/\/w (.+)/, async (msg, match) => {
     await bot.sendPhoto(chatId, chartUrl, { caption, parse_mode: 'Markdown' });
   } catch (err) {
     console.error('/w error:', err.message);
-    bot.sendMessage(chatId, `⚠️ Failed to analyze ${ticker}. Possible cause: API limit, token too new, or unsupported chain.`);
+    bot.sendMessage(chatId, `⚠️ Failed to analyze ${ticker}.\n\nDebug: ${err.message}`);
   }
 });
 
