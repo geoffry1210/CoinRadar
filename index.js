@@ -386,6 +386,7 @@ async function getTopHoldersMoralis(address, chain) {
 }
 
 async function getSolTopHolders(address) {
+  console.log(`Helius getTokenLargestAccounts called for: ${address}`);
   const res = await fetchWithRetry(
     `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`,
     {
@@ -399,6 +400,7 @@ async function getSolTopHolders(address) {
     }
   );
   const data = await res.json();
+  console.log('Helius response:', JSON.stringify(data).slice(0, 500));
   if (data.error) throw new Error(`Helius error: ${data.error.message}`);
   if (!data.result?.value?.length) throw new Error('No Solana holder data returned');
   return data.result.value.slice(0, 10).map((a) => ({
