@@ -595,21 +595,18 @@ async function fetchTrending() {
     return trendingCache;
   }
   try {
-    const res = await fetch('https://api.coingecko.com/api/v3/search/trending');
-    const text = await res.text();
-    console.log('Trending raw response:', text.slice(0, 200));
-    const data = JSON.parse(text);
-    if (!data?.coins?.length) throw new Error('No coins in response');
-    trendingCache = data.coins.slice(0, 10).map((entry, i) => {
-      const c = entry.coin;
-      return {
-        rank:      i + 1,
-        name:      c.name,
-        symbol:    c.symbol?.toUpperCase(),
-        change24h: c.data?.price_change_percentage_24h?.usd,
-        price:     c.data?.price,
-      };
-    });
+    const res = await fetch(
+      'https://api.coincap.io/v2/assets?limit=10&sort=changePercent24Hr&direction=desc'
+    );
+    const data = await res.json();
+    if (!data?.data?.length) throw new Error('No data');
+    trendingCache = data.data.map((c, i) => ({
+      rank:      i + 1,
+      name:      c.name,
+      symbol:    c.symbol,
+      change24h: parseFloat(c.changePercent24Hr || 0),
+      price:     parseFloat(c.priceUsd || 0),
+    }));
     trendingCacheTime = Date.now();
     return trendingCache;
   } catch (err) {
