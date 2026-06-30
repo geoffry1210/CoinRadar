@@ -51,6 +51,20 @@ async function initDb() {
       announcement_id TEXT PRIMARY KEY
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS price_alerts (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL,
+      chat_id BIGINT NOT NULL,
+      username TEXT,
+      ticker TEXT NOT NULL,
+      target_price NUMERIC NOT NULL,
+      direction TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      triggered BOOLEAN NOT NULL DEFAULT FALSE
+    );
+  `);
   console.log('✅ Database tables ready');
 }
 
@@ -873,6 +887,8 @@ bot.deleteMyCommands()
     { command: 'chart',    description: 'Price chart — /chart BTCUSDT BINANCE 1h' },
     { command: 'trending', description: 'Top trending tokens right now' },
     { command: 'whale',    description: 'Recent whale transfers — /whale pepe' },
+    { command: 'alert',    description: 'Set a price alert — /alert BTC 70000' },
+    { command: 'myalerts', description: 'View your active alerts' },
     { command: 'upgrade',  description: 'Unlimited checks subscription' },
     { command: 'mystatus', description: 'Your subscription status' },
     { command: 'help',     description: 'All commands' },
@@ -949,6 +965,8 @@ bot.onText(/\/help/, (msg) => {
     `*/chart <ticker> <exchange> <tf>* — Live chart\n` +
     `*/trending*       — Trending tokens\n` +
     `*/whale <ticker>* — Whale transfers\n` +
+    `*/alert <ticker> <price>* — Set a price alert\n` +
+    `*/myalerts*       — View your active alerts\n` +
     `*/upgrade*        — Subscribe for unlimited checks\n` +
     `*/mystatus*       — Your subscription & usage\n\n` +
     `Chart example: \`/chart BTCUSDT BINANCE 1h\`\n` +
@@ -1121,6 +1139,106 @@ bot.onText(/\/whale (.+)/, async (msg, match) => {
   );
 });
 
+// ─── /alert ───────────────────────────────────────────────────────────────────
+
+bot.onText(/^\/alert$/, (msg) => bot.sendMessage(msg.chat.id, '🔔 Usage: /alert <ticker> <target price>\nExample: /alert BTC 70000\n\nUse /myalerts to see your active alerts.'));
+
+bot.onText(/\/alert (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const username = msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'there');
+  const parts = match[1].trim().split(/\s+/);
+
+  if (parts.length < 2) {
+    return bot.sendMessage(chatId, '🔔 Usage: /alert <ticker> <target price>\nExample: /alert BTC 70000');
+  }
+
+  const ticker = parts[0].toUpperCase();
+  const targetPrice = parseFloat(parts[1]);
+
+  if (isNaN(targetPrice) || targetPrice <= 0) {
+    return bot.sendMessage(chatId, '⚠️ Please enter a valid target price, e.g. /alert BTC 70000');
+  }
+
+  const priceData = await fetchPrice(ticker);
+  if (!priceData || !priceData.price) {
+    return bot.sendMessage(chatId, `⚠️ Couldn't find price data for *${ticker}*.`, { parse_mode: 'Markdown' });
+  }
+
+  const direction = targetPrice >= priceData.price ? 'above' : 'below';
+
+  try {
+    await pool.query(
+      `INSERT INTO price_alerts (user_id, chat_id, username, ticker, target_price, direction, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [userId, chatId, username, ticker, targetPrice, direction, Date.now()]
+    );
+
+    const arrow = direction === 'above' ? '📈' : '📉';
+    bot.sendMessage(
+      chatId,
+      `🔔 Alert set for *${ticker}*\n\nCurrent price: $${priceData.price.toLocaleString(undefined, { maximumSignificantDigits: 6 })}\nTarget: $${targetPrice.toLocaleString()} ${arrow}\n\nYou'll be notified when ${ticker} goes ${direction} $${targetPrice.toLocaleString()}.`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch (err) {
+    console.error('/alert error:', err.message);
+    bot.sendMessage(chatId, '⚠️ Failed to set alert. Please try again.');
+  }
+});
+
+// ─── /myalerts ────────────────────────────────────────────────────────────────
+
+bot.onText(/\/myalerts/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  try {
+    const r = await pool.query(
+      'SELECT id, ticker, target_price, direction FROM price_alerts WHERE user_id = $1 AND chat_id = $2 AND triggered = FALSE ORDER BY created_at DESC',
+      [userId, chatId]
+    );
+
+    if (r.rows.length === 0) {
+      return bot.sendMessage(chatId, '🔔 You have no active alerts.\n\nUse /alert <ticker> <price> to set one.');
+    }
+
+    const lines = r.rows.map((a) => {
+      const arrow = a.direction === 'above' ? '📈' : '📉';
+      return `#${a.id} — *${a.ticker}* ${arrow} $${Number(a.target_price).toLocaleString()}`;
+    }).join('\n');
+
+    bot.sendMessage(
+      chatId,
+      `🔔 *Your Active Alerts*\n\n${lines}\n\nUse /removealert <id> to cancel one.`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch (err) {
+    console.error('/myalerts error:', err.message);
+    bot.sendMessage(chatId, '⚠️ Failed to fetch your alerts.');
+  }
+});
+
+// ─── /removealert ─────────────────────────────────────────────────────────────
+
+bot.onText(/\/removealert (\d+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const alertId = parseInt(match[1]);
+
+  try {
+    const r = await pool.query(
+      'DELETE FROM price_alerts WHERE id = $1 AND user_id = $2 AND chat_id = $3 RETURNING ticker',
+      [alertId, userId, chatId]
+    );
+    if (r.rows.length === 0) {
+      return bot.sendMessage(chatId, `⚠️ Alert #${alertId} not found.`);
+    }
+    bot.sendMessage(chatId, `✅ Removed alert for *${r.rows[0].ticker}*.`, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error('/removealert error:', err.message);
+    bot.sendMessage(chatId, '⚠️ Failed to remove alert.');
+  }
+});
 // ─── /chart ───────────────────────────────────────────────────────────────────
 
 bot.onText(/\/chart (.+)/, async (msg, match) => {
@@ -1298,7 +1416,52 @@ bot.onText(/\/broadcast (.+)/, async (msg, match) => {
 
 checkBybitListings();
 setInterval(checkBybitListings, 5 * 60 * 1000);
+//------------ALERT BG CHECKER-----------------------------------------------------------------------&&&-&&&&&-&&&&&&--------
+async function checkPriceAlerts() {
+  try {
+    const r = await pool.query('SELECT * FROM price_alerts WHERE triggered = FALSE');
+    if (r.rows.length === 0) return;
 
+    // Group alerts by ticker to minimize price lookups
+    const byTicker = {};
+    for (const alert of r.rows) {
+      if (!byTicker[alert.ticker]) byTicker[alert.ticker] = [];
+      byTicker[alert.ticker].push(alert);
+    }
+
+    for (const [ticker, alerts] of Object.entries(byTicker)) {
+      const priceData = await fetchPrice(ticker);
+      if (!priceData || !priceData.price) continue;
+      const currentPrice = priceData.price;
+
+      for (const alert of alerts) {
+        const target = Number(alert.target_price);
+        const hit = alert.direction === 'above' ? currentPrice >= target : currentPrice <= target;
+        if (!hit) continue;
+
+        const mention = alert.username || 'there';
+        const arrow = alert.direction === 'above' ? '📈' : '📉';
+        const message =
+          `🔔 *Price Alert Triggered!*\n\n` +
+          `${mention} ${arrow} *${ticker}* just went ${alert.direction} your target!\n\n` +
+          `Target: $${target.toLocaleString()}\n` +
+          `Current: $${currentPrice.toLocaleString(undefined, { maximumSignificantDigits: 6 })}`;
+
+        try {
+          await bot.sendMessage(alert.chat_id, message, { parse_mode: 'Markdown' });
+          await pool.query('UPDATE price_alerts SET triggered = TRUE WHERE id = $1', [alert.id]);
+        } catch (err) {
+          console.error(`Failed to notify alert #${alert.id}:`, err.message);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('checkPriceAlerts error:', err.message);
+  }
+}
+
+checkPriceAlerts();
+setInterval(checkPriceAlerts, 60 * 1000); // check every 1 minute
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 
 console.log('📡 CoinRadar bot is running...');
