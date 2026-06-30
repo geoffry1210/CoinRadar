@@ -386,29 +386,39 @@ async function getTopHoldersMoralis(address, chain) {
 }
 
 async function getSolTopHolders(address) {
-  console.log(`Helius getTokenLargestAccounts called for: ${address}`);
-  const res = await fetchWithRetry(
-    `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', id: 1,
-        method: 'getTokenLargestAccounts',
-        params: [address, { commitment: 'finalized' }],
-      }),
-    }
-  );
-  const data = await res.json();
-  console.log('Helius response:', JSON.stringify(data).slice(0, 500));
-  if (data.error) throw new Error(`Helius error: ${data.error.message}`);
-  if (!data.result?.value?.length) throw new Error('No Solana holder data returned');
-  return data.result.value.slice(0, 10).map((a) => ({
-    address: a.address,
-    balance: parseFloat(a.uiAmountString || a.uiAmount || 0),
-  }));
-}
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetchWithRetry(
+      `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1,
+          method: 'getTokenLargestAccounts',
+          params: [address, { commitment: 'finalized' }],
+        }),
+      }
+    );
+    const data = await res.json();
 
+    if (data.error) {
+      const isOverloaded = data.error.message?.includes('overloaded');
+      if (isOverloaded && attempt < 2) {
+        console.log(`Helius overloaded, retrying (attempt ${attempt + 1})...`);
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+        continue;
+      }
+      throw new Error(`Helius error: ${data.error.message}`);
+    }
+
+    if (!data.result?.value?.length) throw new Error('No Solana holder data returned');
+    return data.result.value.slice(0, 10).map((a) => ({
+      address: a.address,
+      balance: parseFloat(a.uiAmountString || a.uiAmount || 0),
+    }));
+  }
+  throw new Error('Helius service unavailable after retries');
+}
 async function getTotalSupply(chain, address, ticker) {
   let dexSupply = null;
   try {
