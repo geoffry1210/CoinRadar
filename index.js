@@ -407,9 +407,9 @@ async function getSolTopHolders(address) {
   }));
 }
 
- async function getTotalSupply(chain, address) {
+async function getTotalSupply(chain, address, ticker) {
+  let dexSupply = null;
   try {
-    // Try DexScreener first — most reliable
     const res = await fetchWithRetry(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
     const data = await res.json();
     const pairs = data?.pairs || [];
@@ -418,13 +418,14 @@ async function getSolTopHolders(address) {
       const price = parseFloat(pairs[0].priceUsd || 0);
       if (fdv && price > 0) {
         const supply = fdv / price;
-        if (supply > 0) return supply;
+        if (supply > 0) dexSupply = supply;
       }
     }
   } catch (err) {
     console.error('DexScreener supply fetch failed:', err.message);
   }
 
+  let chainSupply = null;
   try {
     if (chain === 'sol') {
       const res = await fetchWithRetry(
@@ -436,7 +437,7 @@ async function getSolTopHolders(address) {
         }
       );
       const data = await res.json();
-      return data.result?.value?.uiAmount || null;
+      chainSupply = data.result?.value?.uiAmount || null;
     } else {
       const baseUrl = chain === 'eth' ? 'https://api.etherscan.io/api' : 'https://api.bscscan.com/api';
       const res = await fetchWithRetry(`${baseUrl}?module=stats&action=tokensupply&contractaddress=${address}&apikey=${etherscanKey}`);
@@ -445,17 +446,36 @@ async function getSolTopHolders(address) {
         const dr = await fetchWithRetry(`${baseUrl}?module=token&action=tokeninfo&contractaddress=${address}&apikey=${etherscanKey}`);
         const dd = await dr.json();
         const decimals = parseInt(dd.result?.[0]?.decimals || 18);
-        return parseFloat(data.result) / Math.pow(10, decimals);
+        chainSupply = parseFloat(data.result) / Math.pow(10, decimals);
       }
     }
   } catch (err) {
     console.error('Chain supply fetch failed:', err.message);
   }
 
+  // Prefer chain-native supply — it's the ground truth.
+  if (chainSupply && chainSupply > 0) return chainSupply;
+  if (dexSupply && dexSupply > 0) return dexSupply;
+
+  // Final fallback: CMC — useful for BTC and majors with no DEX pair
+  try {
+    const res = await fetchWithRetry(
+      `https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=${ticker || ''}&convert=USD`,
+      { headers: { 'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY, 'Accept': 'application/json' } }
+    );
+    const data = await res.json();
+    const entries = data?.data?.[(ticker || '').toUpperCase()];
+    const coin = Array.isArray(entries) ? entries[0] : entries;
+    const supply = coin?.total_supply || coin?.circulating_supply;
+    if (supply && supply > 0) return supply;
+  } catch (err) {
+    console.error('CMC supply fallback failed:', err.message);
+  }
+
   return null;
 }
 
-async function getTopHoldersWithPercentage(chain, address) {
+async function getTopHoldersWithPercentage(chain, address, ticker) {
   let holders;
   switch (chain) {
     case 'eth': holders = await getEthTopHolders(address); break;
@@ -471,7 +491,7 @@ async function getTopHoldersWithPercentage(chain, address) {
     default: throw new Error('Unsupported chain');
   }
 
-  let totalSupply = await getTotalSupply(chain, address);
+  let totalSupply = await getTotalSupply(chain, address, ticker);
   if (!totalSupply) totalSupply = holders.reduce((s, h) => s + h.balance, 0);
 
   const holdersWithPct = holders.map((h) => ({
@@ -532,7 +552,34 @@ function generatePieChartUrl(holders, top10Total, ticker) {
 // ─── PRICE LOOKUP ─────────────────────────────────────────────────────────────
 
 async function fetchPrice(ticker) {
-  // Try CoinGecko first
+  // Try CoinMarketCap first — best coverage for BTC and high-cap alts
+  try {
+    const res = await fetchWithRetry(
+      `https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=${ticker}&convert=USD`,
+      { headers: { 'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY, 'Accept': 'application/json' } }
+    );
+    const data = await res.json();
+    const entries = data?.data?.[ticker.toUpperCase()];
+    const coin = Array.isArray(entries) ? entries[0] : entries;
+    if (coin) {
+      const q = coin.quote?.USD;
+      return {
+        name:      coin.name,
+        symbol:    coin.symbol,
+        price:     q?.price,
+        change24h: q?.percent_change_24h,
+        change7d:  q?.percent_change_7d,
+        marketCap: q?.market_cap,
+        volume24h: q?.volume_24h,
+        ath:       null, // CMC quotes endpoint doesn't include ATH
+        logoImage: coin.id ? `https://s2.coinmarketcap.com/static/img/coins/64x64/${coin.id}.png` : null,
+      };
+    }
+  } catch (err) {
+    console.error('CMC price fetch failed:', err.message);
+  }
+
+  // Fallback: CoinGecko
   try {
     const searchRes = await fetchWithRetry(
       `https://api.coingecko.com/api/v3/search?query=${ticker}`,
@@ -563,7 +610,7 @@ async function fetchPrice(ticker) {
     console.error('CoinGecko price fetch failed:', err.message);
   }
 
-  // Fallback: DexScreener
+  // Final fallback: DexScreener — for very new/low-cap tokens not on CMC or CoinGecko
   try {
     const res = await fetchWithRetry(`https://api.dexscreener.com/latest/dex/search?q=${ticker}`);
     const data = await res.json();
@@ -595,11 +642,30 @@ async function fetchTrending() {
     return trendingCache;
   }
   try {
-    const res = await fetch(
-      'https://api.coincap.io/v2/assets?limit=10&sort=changePercent24Hr&direction=desc'
+    const res = await fetchWithRetry(
+      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?limit=10&sort=percent_change_24h&sort_dir=desc&convert=USD',
+      { headers: { 'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY, 'Accept': 'application/json' } }
     );
     const data = await res.json();
-    if (!data?.data?.length) throw new Error('No data');
+    if (!data?.data?.length) throw new Error(`No CMC data: ${JSON.stringify(data?.status)}`);
+    trendingCache = data.data.map((c, i) => ({
+      rank:      i + 1,
+      name:      c.name,
+      symbol:    c.symbol,
+      change24h: c.quote?.USD?.percent_change_24h,
+      price:     c.quote?.USD?.price,
+    }));
+    trendingCacheTime = Date.now();
+    return trendingCache;
+  } catch (err) {
+    console.error('CMC trending fetch failed:', err.message);
+  }
+
+  // Fallback: CoinCap — free, no key needed
+  try {
+    const res = await fetch('https://api.coincap.io/v2/assets?limit=10&sort=changePercent24Hr&direction=desc');
+    const data = await res.json();
+    if (!data?.data?.length) throw new Error('No CoinCap data');
     trendingCache = data.data.map((c, i) => ({
       rank:      i + 1,
       name:      c.name,
@@ -610,7 +676,7 @@ async function fetchTrending() {
     trendingCacheTime = Date.now();
     return trendingCache;
   } catch (err) {
-    console.error('Trending fetch failed:', err.message);
+    console.error('CoinCap trending fallback failed:', err.message);
     return trendingCache || null;
   }
 }
@@ -675,12 +741,21 @@ async function fetchWhaleTransfers(chain, address, ticker) {
     const txs = data?.result;
     if (!Array.isArray(txs) || txs.length === 0) return '⚠️ No recent transfers found.';
     const decimals = parseInt(txs[0]?.tokenDecimal || 18);
-    const parsed = txs.map((tx) => ({
-      from:  tx.from,
-      to:    tx.to,
-      value: parseFloat(tx.value) / Math.pow(10, decimals),
-      time:  new Date(Number(tx.timeStamp) * 1000),
-    }));
+
+    // Dedupe by transaction hash — a single tx can emit multiple transfer events (router hops)
+    const seenHashes = new Set();
+    const parsed = [];
+    for (const tx of txs) {
+      if (seenHashes.has(tx.hash)) continue;
+      seenHashes.add(tx.hash);
+      parsed.push({
+        from:  tx.from,
+        to:    tx.to,
+        value: parseFloat(tx.value) / Math.pow(10, decimals),
+        time:  new Date(Number(tx.timeStamp) * 1000),
+      });
+    }
+
     const whales = parsed.sort((a, b) => b.value - a.value).slice(0, 5);
     return whales.map((tx, i) => {
       const val = tx.value >= 1e6 ? `${(tx.value / 1e6).toFixed(2)}M`
@@ -930,7 +1005,7 @@ bot.onText(/\/w (.+)/, async (msg, match) => {
       return bot.sendMessage(chatId, `⚠️ Couldn't find *${ticker}* on-chain.`, { parse_mode: 'Markdown' });
     }
 
-    const { holders, top10Total, totalSupply } = await getTopHoldersWithPercentage(contract.chain, contract.address);
+    const { holders, top10Total, totalSupply } = await getTopHoldersWithPercentage(contract.chain, contract.address, ticker);
     const risk      = assessConcentrationRisk(top10Total);
     const chartUrl = generatePieChartUrl(holders, top10Total, ticker);
 
@@ -948,7 +1023,7 @@ bot.onText(/\/w (.+)/, async (msg, match) => {
     await bot.sendPhoto(chatId, chartUrl, { caption, parse_mode: 'Markdown' });
   } catch (err) {
     console.error('/w error:', err.message);
-    bot.sendMessage(chatId, `⚠️ Failed to analyze ${ticker}.\n\nDebug: ${err.message}`);
+    bot.sendMessage(chatId, `⚠️ Failed to analyze ${ticker}. Possible cause: API limit, token too new, or unsupported chain.`);
   }
 });
 
