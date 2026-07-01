@@ -62,7 +62,8 @@ async function initDb() {
       target_price NUMERIC NOT NULL,
       direction TEXT NOT NULL,
       created_at BIGINT NOT NULL,
-      triggered BOOLEAN NOT NULL DEFAULT FALSE
+      triggered BOOLEAN NOT NULL DEFAULT FALSE,
+      recurring BOOLEAN NOT NULL DEFAULT FALSE
     );
   `);
   console.log('✅ Database tables ready');
