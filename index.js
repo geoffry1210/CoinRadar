@@ -966,7 +966,8 @@ bot.onText(/\/help/, (msg) => {
     `*/chart <ticker> <exchange> <tf>* — Live chart\n` +
     `*/trending*       — Trending tokens\n` +
     `*/whale <ticker>* — Whale transfers\n` +
-    `*/alert <ticker> <price>* — Set a price alert\n` +
+    `*/alert <ticker> <price> [recurring]* — Set a price alert\n` +
+    `*/myalerts*       — View your active alerts\n` +
     `*/myalerts*       — View your active alerts\n` +
     `*/upgrade*        — Subscribe for unlimited checks\n` +
     `*/mystatus*       — Your subscription & usage\n\n` +
@@ -1142,7 +1143,7 @@ bot.onText(/\/whale (.+)/, async (msg, match) => {
 
 // ─── /alert ───────────────────────────────────────────────────────────────────
 
-bot.onText(/^\/alert$/, (msg) => bot.sendMessage(msg.chat.id, '🔔 Usage: /alert <ticker> <target price>\nExample: /alert BTC 70000\n\nUse /myalerts to see your active alerts.'));
+bot.onText(/^\/alert$/, (msg) => bot.sendMessage(msg.chat.id, '🔔 Usage: /alert <ticker> <target price> [recurring]\nExample: /alert BTC 70000\nExample (recurring): /alert BTC 70000 recurring\n\nUse /myalerts to see your active alerts.'));
 
 bot.onText(/\/alert (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
@@ -1151,11 +1152,12 @@ bot.onText(/\/alert (.+)/, async (msg, match) => {
   const parts = match[1].trim().split(/\s+/);
 
   if (parts.length < 2) {
-    return bot.sendMessage(chatId, '🔔 Usage: /alert <ticker> <target price>\nExample: /alert BTC 70000');
+    return bot.sendMessage(chatId, '🔔 Usage: /alert <ticker> <target price> [recurring]\nExample: /alert BTC 70000');
   }
 
   const ticker = parts[0].toUpperCase();
   const targetPrice = parseFloat(parts[1]);
+  const isRecurring = parts[2]?.toLowerCase() === 'recurring';
 
   if (isNaN(targetPrice) || targetPrice <= 0) {
     return bot.sendMessage(chatId, '⚠️ Please enter a valid target price, e.g. /alert BTC 70000');
@@ -1170,15 +1172,16 @@ bot.onText(/\/alert (.+)/, async (msg, match) => {
 
   try {
     await pool.query(
-      `INSERT INTO price_alerts (user_id, chat_id, username, ticker, target_price, direction, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [userId, chatId, username, ticker, targetPrice, direction, Date.now()]
+      `INSERT INTO price_alerts (user_id, chat_id, username, ticker, target_price, direction, created_at, recurring)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [userId, chatId, username, ticker, targetPrice, direction, Date.now(), isRecurring]
     );
 
     const arrow = direction === 'above' ? '📈' : '📉';
+    const recurringNote = isRecurring ? '\n\n🔁 This alert will keep firing every time the price crosses this level.' : '';
     bot.sendMessage(
       chatId,
-      `🔔 Alert set for *${ticker}*\n\nCurrent price: $${priceData.price.toLocaleString(undefined, { maximumSignificantDigits: 6 })}\nTarget: $${targetPrice.toLocaleString()} ${arrow}\n\nYou'll be notified when ${ticker} goes ${direction} $${targetPrice.toLocaleString()}.`,
+      `🔔 Alert set for *${ticker}*\n\nCurrent price: $${priceData.price.toLocaleString(undefined, { maximumSignificantDigits: 6 })}\nTarget: $${targetPrice.toLocaleString()} ${arrow}\n\nYou'll be notified when ${ticker} goes ${direction} $${targetPrice.toLocaleString()}.${recurringNote}`,
       { parse_mode: 'Markdown' }
     );
   } catch (err) {
@@ -1195,7 +1198,7 @@ bot.onText(/\/myalerts/, async (msg) => {
 
   try {
     const r = await pool.query(
-      'SELECT id, ticker, target_price, direction FROM price_alerts WHERE user_id = $1 AND chat_id = $2 AND triggered = FALSE ORDER BY created_at DESC',
+      'SELECT id, ticker, target_price, direction, recurring FROM price_alerts WHERE user_id = $1 AND chat_id = $2 AND triggered = FALSE ORDER BY created_at DESC',
       [userId, chatId]
     );
 
@@ -1205,7 +1208,8 @@ bot.onText(/\/myalerts/, async (msg) => {
 
     const lines = r.rows.map((a) => {
       const arrow = a.direction === 'above' ? '📈' : '📉';
-      return `#${a.id} — *${a.ticker}* ${arrow} $${Number(a.target_price).toLocaleString()}`;
+      const badge = a.recurring ? ' 🔁' : '';
+      return `#${a.id} — *${a.ticker}* ${arrow} $${Number(a.target_price).toLocaleString()}${badge}`;
     }).join('\n');
 
     bot.sendMessage(
@@ -1423,7 +1427,6 @@ async function checkPriceAlerts() {
     const r = await pool.query('SELECT * FROM price_alerts WHERE triggered = FALSE');
     if (r.rows.length === 0) return;
 
-    // Group alerts by ticker to minimize price lookups
     const byTicker = {};
     for (const alert of r.rows) {
       if (!byTicker[alert.ticker]) byTicker[alert.ticker] = [];
@@ -1450,7 +1453,17 @@ async function checkPriceAlerts() {
 
         try {
           await bot.sendMessage(alert.chat_id, message, { parse_mode: 'Markdown' });
-          await pool.query('UPDATE price_alerts SET triggered = TRUE WHERE id = $1', [alert.id]);
+
+          if (alert.recurring) {
+            // Flip direction so it must cross back before firing again
+            const newDirection = alert.direction === 'above' ? 'below' : 'above';
+            await pool.query(
+              'UPDATE price_alerts SET direction = $1 WHERE id = $2',
+              [newDirection, alert.id]
+            );
+          } else {
+            await pool.query('UPDATE price_alerts SET triggered = TRUE WHERE id = $1', [alert.id]);
+          }
         } catch (err) {
           console.error(`Failed to notify alert #${alert.id}:`, err.message);
         }
@@ -1462,7 +1475,7 @@ async function checkPriceAlerts() {
 }
 
 checkPriceAlerts();
-setInterval(checkPriceAlerts, 60 * 1000); // check every 1 minute
+setInterval(checkPriceAlerts, 60 * 1000);
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 
 console.log('📡 CoinRadar bot is running...');
