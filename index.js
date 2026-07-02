@@ -810,72 +810,6 @@ async function fetchWhaleTransfers(chain, address, ticker) {
   }
 }
 
-// ─── /track ───────────────────────────────────────────────────────────────────
-
-bot.onText(/^\/track$/, (msg) => bot.sendMessage(msg.chat.id, '💼 Usage: /track <ticker> <amount>\nExample: /track BTC 0.5\n\nUse /portfolio to view your holdings.'));
-
-bot.onText(/\/track (.+)/, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-  const parts = match[1].trim().split(/\s+/);
-
-  if (parts.length < 2) {
-    return bot.sendMessage(chatId, '💼 Usage: /track <ticker> <amount>\nExample: /track BTC 0.5');
-  }
-
-  const ticker = parts[0].toUpperCase();
-  const amount = parseFloat(parts[1]);
-
-  if (isNaN(amount) || amount <= 0) {
-    return bot.sendMessage(chatId, '⚠️ Please enter a valid amount, e.g. /track BTC 0.5');
-  }
-
-  const priceData = await fetchPrice(ticker);
-  if (!priceData || !priceData.price) {
-    return bot.sendMessage(chatId, `⚠️ Couldn't find price data for *${ticker}*.`, { parse_mode: 'Markdown' });
-  }
-
-  try {
-    await pool.query(
-      `INSERT INTO holdings (user_id, ticker, amount, created_at)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (user_id, ticker) DO UPDATE SET amount = $3`,
-      [userId, ticker, amount, Date.now()]
-    );
-
-    const value = amount * priceData.price;
-    bot.sendMessage(
-      chatId,
-      `💼 Tracking *${amount} ${ticker}*\n\nCurrent price: $${priceData.price.toLocaleString(undefined, { maximumSignificantDigits: 6 })}\nValue: $${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}\n\nUse /portfolio to view your full portfolio.`,
-      { parse_mode: 'Markdown' }
-    );
-  } catch (err) {
-    console.error('/track error:', err.message);
-    bot.sendMessage(chatId, '⚠️ Failed to save holding. Please try again.');
-  }
-});
-
-// ─── /untrack ─────────────────────────────────────────────────────────────────
-
-bot.onText(/\/untrack (.+)/, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-  const ticker = match[1].trim().toUpperCase();
-
-  try {
-    const r = await pool.query('DELETE FROM holdings WHERE user_id = $1 AND ticker = $2 RETURNING ticker', [userId, ticker]);
-    if (r.rows.length === 0) {
-      return bot.sendMessage(chatId, `⚠️ You're not tracking *${ticker}*.`, { parse_mode: 'Markdown' });
-    }
-    bot.sendMessage(chatId, `✅ Removed *${ticker}* from your portfolio.`, { parse_mode: 'Markdown' });
-  } catch (err) {
-    console.error('/untrack error:', err.message);
-    bot.sendMessage(chatId, '⚠️ Failed to remove holding.');
-  }
-});
-
-
-
 
 // ─── BYBIT LISTING MONITOR ────────────────────────────────────────────────────
 
@@ -1226,6 +1160,70 @@ bot.onText(/\/whale (.+)/, async (msg, match) => {
   );
 });
 
+
+// ─── /track ───────────────────────────────────────────────────────────────────
+
+bot.onText(/^\/track$/, (msg) => bot.sendMessage(msg.chat.id, '💼 Usage: /track <ticker> <amount>\nExample: /track BTC 0.5\n\nUse /portfolio to view your holdings.'));
+
+bot.onText(/\/track (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const parts = match[1].trim().split(/\s+/);
+
+  if (parts.length < 2) {
+    return bot.sendMessage(chatId, '💼 Usage: /track <ticker> <amount>\nExample: /track BTC 0.5');
+  }
+
+  const ticker = parts[0].toUpperCase();
+  const amount = parseFloat(parts[1]);
+
+  if (isNaN(amount) || amount <= 0) {
+    return bot.sendMessage(chatId, '⚠️ Please enter a valid amount, e.g. /track BTC 0.5');
+  }
+
+  const priceData = await fetchPrice(ticker);
+  if (!priceData || !priceData.price) {
+    return bot.sendMessage(chatId, `⚠️ Couldn't find price data for *${ticker}*.`, { parse_mode: 'Markdown' });
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO holdings (user_id, ticker, amount, created_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, ticker) DO UPDATE SET amount = $3`,
+      [userId, ticker, amount, Date.now()]
+    );
+
+    const value = amount * priceData.price;
+    bot.sendMessage(
+      chatId,
+      `💼 Tracking *${amount} ${ticker}*\n\nCurrent price: $${priceData.price.toLocaleString(undefined, { maximumSignificantDigits: 6 })}\nValue: $${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}\n\nUse /portfolio to view your full portfolio.`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch (err) {
+    console.error('/track error:', err.message);
+    bot.sendMessage(chatId, '⚠️ Failed to save holding. Please try again.');
+  }
+});
+
+// ─── /untrack ─────────────────────────────────────────────────────────────────
+
+bot.onText(/\/untrack (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const ticker = match[1].trim().toUpperCase();
+
+  try {
+    const r = await pool.query('DELETE FROM holdings WHERE user_id = $1 AND ticker = $2 RETURNING ticker', [userId, ticker]);
+    if (r.rows.length === 0) {
+      return bot.sendMessage(chatId, `⚠️ You're not tracking *${ticker}*.`, { parse_mode: 'Markdown' });
+    }
+    bot.sendMessage(chatId, `✅ Removed *${ticker}* from your portfolio.`, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error('/untrack error:', err.message);
+    bot.sendMessage(chatId, '⚠️ Failed to remove holding.');
+  }
+});
 // ─── /portfolio ───────────────────────────────────────────────────────────────
 
 bot.onText(/\/portfolio/, async (msg) => {  const chatId = msg.chat.id;
