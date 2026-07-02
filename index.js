@@ -874,47 +874,8 @@ bot.onText(/\/untrack (.+)/, async (msg, match) => {
   }
 });
 
-// ─── /portfolio ───────────────────────────────────────────────────────────────
 
-bot.onText(/\/portfolio/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
 
-  try {
-    const r = await pool.query('SELECT ticker, amount FROM holdings WHERE user_id = $1 ORDER BY created_at ASC', [userId]);
-    if (r.rows.length === 0) {
-      return bot.sendMessage(chatId, '💼 You have no tracked holdings.\n\nUse /track <ticker> <amount> to add one.');
-    }
-
-    bot.sendMessage(chatId, '💼 Fetching your portfolio...');
-
-    let totalValue = 0;
-    const lines = [];
-
-    for (const holding of r.rows) {
-      const priceData = await fetchPrice(holding.ticker);
-      if (!priceData || !priceData.price) {
-        lines.push(`*${holding.ticker}*: ${holding.amount} — ❓ price unavailable`);
-        continue;
-      }
-      const value = Number(holding.amount) * priceData.price;
-      totalValue += value;
-      const changeStr = priceData.change24h != null
-        ? ` (${priceData.change24h >= 0 ? '+' : ''}${priceData.change24h.toFixed(1)}%)`
-        : '';
-      lines.push(`*${holding.ticker}*: ${holding.amount} — $${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}${changeStr}`);
-    }
-
-    const caption =
-      `💼 *Your Portfolio*\n\n${lines.join('\n')}\n\n` +
-      `*Total value: $${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}*`;
-
-    bot.sendMessage(chatId, caption, { parse_mode: 'Markdown' });
-  } catch (err) {
-    console.error('/portfolio error:', err.message);
-    bot.sendMessage(chatId, '⚠️ Failed to fetch your portfolio.');
-  }
-});
 
 // ─── BYBIT LISTING MONITOR ────────────────────────────────────────────────────
 
@@ -1265,6 +1226,46 @@ bot.onText(/\/whale (.+)/, async (msg, match) => {
   );
 });
 
+// ─── /portfolio ───────────────────────────────────────────────────────────────
+
+bot.onText(/\/portfolio/, async (msg) => {  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  try {
+    const r = await pool.query('SELECT ticker, amount FROM holdings WHERE user_id = $1 ORDER BY created_at ASC', [userId]);
+    if (r.rows.length === 0) {
+      return bot.sendMessage(chatId, '💼 You have no tracked holdings.\n\nUse /track <ticker> <amount> to add one.');
+    }
+
+    bot.sendMessage(chatId, '💼 Fetching your portfolio...');
+
+    let totalValue = 0;
+    const lines = [];
+
+    for (const holding of r.rows) {
+      const priceData = await fetchPrice(holding.ticker);
+      if (!priceData || !priceData.price) {
+        lines.push(`*${holding.ticker}*: ${holding.amount} — ❓ price unavailable`);
+        continue;
+      }
+      const value = Number(holding.amount) * priceData.price;
+      totalValue += value;
+      const changeStr = priceData.change24h != null
+        ? ` (${priceData.change24h >= 0 ? '+' : ''}${priceData.change24h.toFixed(1)}%)`
+        : '';
+      lines.push(`*${holding.ticker}*: ${holding.amount} — $${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}${changeStr}`);
+    }
+
+    const caption =
+      `💼 *Your Portfolio*\n\n${lines.join('\n')}\n\n` +
+      `*Total value: $${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}*`;
+
+    bot.sendMessage(chatId, caption, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error('/portfolio error:', err.message);
+    bot.sendMessage(chatId, '⚠️ Failed to fetch your portfolio.');
+  }
+});
 // ─── /alert ───────────────────────────────────────────────────────────────────
 
 bot.onText(/^\/alert$/, (msg) => bot.sendMessage(msg.chat.id, '🔔 Usage: /alert <ticker> <target price> [recurring]\nExample: /alert BTC 70000\nExample (recurring): /alert BTC 70000 recurring\n\nUse /myalerts to see your active alerts.'));
