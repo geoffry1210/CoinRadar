@@ -586,6 +586,9 @@ async function fetchPrice(ticker) {
       { headers: { 'X-CMC_PRO_API_KEY': process.env.CMC_API_KEY, 'Accept': 'application/json' } }
     );
     const data = await res.json();
+    if (data?.status?.error_code) {
+      console.error('CMC error:', data.status.error_code, data.status.error_message);
+    }
     const entries = data?.data?.[ticker.toUpperCase()];
     const coin = Array.isArray(entries) ? entries[0] : entries;
     if (coin) {
@@ -598,7 +601,7 @@ async function fetchPrice(ticker) {
         change7d:  q?.percent_change_7d,
         marketCap: q?.market_cap,
         volume24h: q?.volume_24h,
-        ath:       null, // CMC quotes endpoint doesn't include ATH
+        ath:       null,
         logoImage: coin.id ? `https://s2.coinmarketcap.com/static/img/coins/64x64/${coin.id}.png` : null,
       };
     }
@@ -637,7 +640,7 @@ async function fetchPrice(ticker) {
     console.error('CoinGecko price fetch failed:', err.message);
   }
 
-  // Final fallback: DexScreener — for very new/low-cap tokens not on CMC or CoinGecko
+  // Final fallback: DexScreener
   try {
     const res = await fetchWithRetry(`https://api.dexscreener.com/latest/dex/search?q=${ticker}`);
     const data = await res.json();
@@ -661,7 +664,6 @@ async function fetchPrice(ticker) {
 
   return null;
 }
-
 // ─── TRENDING ─────────────────────────────────────────────────────────────────
 
 async function fetchTrending() {
