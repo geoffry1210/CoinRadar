@@ -11,6 +11,13 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const fetch = require('node-fetch');
+const http = require('http');
+const https = require('https');
+
+// Disable keep-alive to avoid stale sockets causing "Premature close" errors
+// on long-running processes (node-fetch v2 known issue)
+http.globalAgent = new http.Agent({ keepAlive: false });
+https.globalAgent = new https.Agent({ keepAlive: false });
 const { Pool } = require('pg');
 let trendingCache = null;
 let trendingCacheTime = 0;
