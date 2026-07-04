@@ -83,6 +83,11 @@ await pool.query(`
       UNIQUE(user_id, ticker)
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS seen_okx_announcements (
+      announcement_id TEXT PRIMARY KEY
+    );
+  `);
   
   console.log('✅ Database tables ready');
 }
@@ -834,6 +839,19 @@ async function countSeenAnnouncements() {
   return Number(r.rows[0].count);
 }
 
+async function hasSeenOkxAnnouncement(id) {
+  const r = await pool.query('SELECT 1 FROM seen_okx_announcements WHERE announcement_id = $1', [id]);
+  return r.rows.length > 0;
+}
+
+async function markOkxAnnouncementSeen(id) {
+  await pool.query('INSERT INTO seen_okx_announcements (announcement_id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
+}
+
+async function countSeenOkxAnnouncements() {
+  const r = await pool.query('SELECT COUNT(*) FROM seen_okx_announcements');
+  return Number(r.rows[0].count);
+}
 async function runSafetyCheckByTitle(title) {
   const ticker = extractTicker(title);
   if (!ticker) return null;
@@ -896,6 +914,50 @@ async function checkBybitListings() {
     }
   } catch (err) {
     console.error('Bybit check error:', err.message);
+  }
+}
+async function checkOkxListings() {
+  try {
+    const res = await fetch(
+      'https://www.okx.com/api/v5/support/announcements?annType=announcements-new-listings',
+      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CoinRadarBot/1.0)', 'Accept': 'application/json' } }
+    );
+    const rawText = await res.text();
+    let data;
+    try { data = JSON.parse(rawText); }
+    catch { console.error('Non-JSON from OKX:', rawText.slice(0, 200)); return; }
+
+    const items = data?.data?.[0]?.details || data?.data || [];
+    if (!Array.isArray(items) || items.length === 0) return;
+
+    const alreadySeen = await countSeenOkxAnnouncements();
+    if (alreadySeen === 0) {
+      for (const item of items) {
+        const id = item.pTime || item.title;
+        if (id) await markOkxAnnouncementSeen(id);
+      }
+      console.log(`Initialized with ${items.length} existing OKX announcements.`);
+      return;
+    }
+
+    for (const item of items) {
+      const id = item.pTime || item.title;
+      if (!id) continue;
+      const titleLower = (item.title || '').toLowerCase();
+      const isListing = titleLower.includes('list') || titleLower.includes('launch');
+      if (!isListing) continue;
+      if (await hasSeenOkxAnnouncement(id)) continue;
+      await markOkxAnnouncementSeen(id);
+
+      if (!myChatId) continue;
+      const safetyResult = await runSafetyCheckByTitle(item.title);
+      const caption = `🚨 New OKX Listing\n\n${item.title}\n\n🔗 ${item.url || 'No link available'}${safetyResult ? `\n\n${safetyResult.text}` : ''}`;
+      if (safetyResult?.image) bot.sendPhoto(myChatId, safetyResult.image, { caption });
+      else bot.sendMessage(myChatId, caption);
+      console.log(`New OKX listing: ${item.title}`);
+    }
+  } catch (err) {
+    console.error('OKX check error:', err.message);
   }
 }
 
@@ -1554,6 +1616,9 @@ bot.onText(/\/broadcast (.+)/, async (msg, match) => {
 
 checkBybitListings();
 setInterval(checkBybitListings, 5 * 60 * 1000);
+
+checkOkxListings();
+setInterval(checkOkxListings, 5 * 60 * 1000);
 //------------ALERT BG CHECKER-----------------------------------------------------------------------&&&-&&&&&-&&&&&&--------
 async function checkPriceAlerts() {
   try {
