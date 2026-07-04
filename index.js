@@ -858,7 +858,7 @@ async function runSafetyCheckByTitle(title) {
 async function checkBybitListings() {
   try {
     const res = await fetch(
-      'https://api.bybit.com/v5/announcements/index?locale=en-US&type=new_crypto&limit=10',
+      'https://api.bybit.com/v5/announcements/index?locale=en-US&limit=20',
       { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CoinRadarBot/1.0)', 'Accept': 'application/json' } }
     );
     const rawText = await res.text();
@@ -880,6 +880,9 @@ async function checkBybitListings() {
 
     for (const item of items) {
       if (!item.id) continue;
+      const titleLower = (item.title || '').toLowerCase();
+      const isListing = titleLower.includes('new listing') || titleLower.includes('new innovation zone') || titleLower.includes('new spot') || titleLower.includes('perpetual contract listing') || titleLower.includes('will list');
+      if (!isListing) continue;
       if (await hasSeenAnnouncement(item.id)) continue;
       await markAnnouncementSeen(item.id);
       listingsSeenToday++;
