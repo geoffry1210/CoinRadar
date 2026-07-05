@@ -1614,11 +1614,14 @@ bot.onText(/\/broadcast (.+)/, async (msg, match) => {
 
 // ─── BYBIT POLLING ────────────────────────────────────────────────────────────
 
-checkBybitListings();
-setInterval(checkBybitListings, 5 * 60 * 1000);
-
-checkOkxListings();
-setInterval(checkOkxListings, 5 * 60 * 1000);
+setTimeout(() => {
+  checkBybitListings();
+  setInterval(checkBybitListings, 5 * 60 * 1000);
+}, 5000);
+setTimeout(() => {
+  checkOkxListings();
+  setInterval(checkOkxListings, 5 * 60 * 1000);
+}, 5000);
 //------------ALERT BG CHECKER-----------------------------------------------------------------------&&&-&&&&&-&&&&&&--------
 async function checkPriceAlerts() {
   try {
