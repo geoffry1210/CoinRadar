@@ -1211,10 +1211,18 @@ bot.onText(/\/c (.+)/, async (msg, match) => {
   let contract = await getTokenContract(ticker);
   if (!contract) contract = await searchDexScreener(ticker);
 
+  const nativeCoins = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'LTC', 'AVAX', 'DOT', 'MATIC', 'TRX', 'XMR', 'ZEC'];
+
   if (!contract || !contract.address) {
+    if (nativeCoins.includes(ticker)) {
+      return bot.sendMessage(
+        chatId,
+        `ℹ️ *${ticker}* is a native blockchain asset, not a smart contract token — there's no contract, mint authority, or liquidity pool to check.\n\nTry */p ${ticker.toLowerCase()}* for price data instead.`,
+        { parse_mode: 'Markdown' }
+      );
+    }
     return bot.sendMessage(chatId, `⚠️ Couldn't find *${ticker}* on-chain. Try the exact ticker (e.g. PEPE, not Pepecoin).`, { parse_mode: 'Markdown' });
   }
-
   const [verified, liquidityResult, age, volume, devHistory] = await Promise.all([
     checkContractVerified(contract.chain, contract.address),
     checkLiquidity(contract.address),
