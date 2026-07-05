@@ -365,14 +365,7 @@ async function check24hTxVolume(address) {
   }
 }
 
-function assessSafetyRisk(verified, liquidity, mintBad, devRiskFlag = false) {
-  const verifiedBad  = verified.includes('⚠️') || verified.includes('❓');
-  const liquidityBad = liquidity.includes('⚠️') || liquidity.includes('❓');
-  const badSignals   = [verifiedBad, liquidityBad, mintBad, devRiskFlag].filter(Boolean).length;
-  if (badSignals >= 2) return '🔴 HIGH RISK';
-  if (badSignals === 1) return '🟡 CAUTION';
-  return '🟢 LOW RISK';
-}
+
 
 async function getDevWalletHistory(chain, address) {
   if (chain === 'sol') return null;
@@ -415,6 +408,15 @@ async function getDevWalletHistory(chain, address) {
     console.error('DevCheck exception:', err.message);
     return null;
   }
+}
+
+function assessSafetyRisk(verified, liquidity, mintBad, devRiskFlag = false) {
+  const verifiedBad  = verified.includes('⚠️') || verified.includes('❓');
+  const liquidityBad = liquidity.includes('⚠️') || liquidity.includes('❓');
+  const badSignals   = [verifiedBad, liquidityBad, mintBad, devRiskFlag].filter(Boolean).length;
+  if (badSignals >= 2) return '🔴 HIGH RISK';
+  if (badSignals === 1) return '🟡 CAUTION';
+  return '🟢 LOW RISK';
 }
 // ─── HOLDER ANALYSIS HELPERS ──────────────────────────────────────────────────
 
