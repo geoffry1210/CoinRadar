@@ -1049,6 +1049,8 @@ bot.deleteMyCommands()
     { command: 'c',        description: 'Safety check — /c pepe' },
     { command: 'w',        description: 'Top 10 holder chart — /w pepe' },
     { command: 'connections', description: 'Find shared whale wallets — /connections pepe' },
+    { command: 'watchdev',   description: 'Watch a token\'s dev wallet' },
+    { command: 'mywatches',  description: 'View your dev wallet watches' },
     { command: 'p',        description: 'Price lookup — /p pepe' },
     { command: 'chart',    description: 'Price chart — /chart BTCUSDT BINANCE 1h' },
     { command: 'trending', description: 'Top trending tokens right now' },
@@ -1142,6 +1144,8 @@ bot.onText(/\/help (.+)/, (msg, match) => {
       `*/connections <ticker>* — Find shared whale wallets across tokens\n\n` +
       `*/w <ticker>* — Top 10 holder concentration chart\n` +
       `*/p <ticker>* — Price, market cap, 24h/7d change\n` +
+      `*/watchdev <ticker>* — Alert on deployer wallet activity\n` +
+      `*/mywatches* — View your dev wallet watches\n` +
       `*/chart <ticker> <exchange> <tf>* — Live TradingView chart\n` +
       `*/trending* — Top 10 gainers right now\n` +
       `*/whale <ticker>* — Recent large transfers\n\n` +
@@ -1924,6 +1928,52 @@ setTimeout(() => {
   checkOkxListings();
   setInterval(checkOkxListings, 5 * 60 * 1000);
 }, 5000);
+//----–—----------------------DEV WATCH BG CHECKER---------------------------------------------_-------------------------
+async function checkDevWatches() {
+  try {
+    const r = await pool.query('SELECT * FROM dev_watches');
+    if (r.rows.length === 0) return;
+
+    for (const watch of r.rows) {
+      try {
+        const chainId = watch.chain === 'eth' ? 1 : 56;
+        const baseUrl = `https://api.etherscan.io/v2/api?chainid=${chainId}`;
+        const res = await fetchWithRetry(
+          `${baseUrl}&module=account&action=txlist&address=${watch.dev_address}&startblock=0&endblock=99999999&page=1&offset=1&sort=desc&apikey=${etherscanKey}`
+        );
+        const data = await res.json();
+        const latestTx = data?.result?.[0];
+        if (!latestTx) continue;
+
+        const isNewTx = watch.last_tx_hash && latestTx.hash !== watch.last_tx_hash;
+        const silenceDays = watch.last_checked_at
+          ? Math.floor((Date.now() - Number(latestTx.timeStamp) * 1000) / (1000 * 60 * 60 * 24))
+          : null;
+
+        if (isNewTx) {
+          const mention = watch.username || 'there';
+          const message =
+            `👁️ *Dev Wallet Activity Detected!*\n\n` +
+            `${mention} — *${watch.ticker}*'s deployer wallet just moved funds after a period of inactivity.\n\n` +
+            `Wallet: \`${watch.dev_address.slice(0, 10)}...${watch.dev_address.slice(-4)}\`\n` +
+            `Tx: \`${latestTx.hash.slice(0, 10)}...\`\n\n` +
+            `_This can be routine activity or may precede a sell-off. Always verify independently._`;
+
+          await bot.sendMessage(watch.chat_id, message, { parse_mode: 'Markdown' });
+        }
+
+        await pool.query(
+          'UPDATE dev_watches SET last_tx_hash = $1, last_checked_at = $2 WHERE id = $3',
+          [latestTx.hash, Date.now(), watch.id]
+        );
+      } catch (err) {
+        console.error(`Dev watch check failed for #${watch.id} (${watch.ticker}):`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('checkDevWatches error:', err.message);
+  }
+}
 //------------ALERT BG CHECKER-----------------------------------------------------------------------&&&-&&&&&-&&&&&&--------
 async function checkPriceAlerts() {
   try {
@@ -1979,6 +2029,11 @@ async function checkPriceAlerts() {
 
 checkPriceAlerts();
 setInterval(checkPriceAlerts, 60 * 1000);
+
+setTimeout(() => {
+  checkDevWatches();
+  setInterval(checkDevWatches, 40 * 60 * 1000); // every 40 minutes
+}, 8000);
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 
 console.log('📡 CoinRadar bot is running...');
