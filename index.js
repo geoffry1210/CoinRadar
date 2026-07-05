@@ -101,7 +101,21 @@ await pool.query(`
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_holder_wallet ON holder_snapshots (wallet_address);
   `);
-  
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dev_watches (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL,
+      chat_id BIGINT NOT NULL,
+      username TEXT,
+      ticker TEXT NOT NULL,
+      chain TEXT NOT NULL,
+      dev_address TEXT NOT NULL,
+      last_tx_hash TEXT,
+      last_checked_at BIGINT NOT NULL,
+      created_at BIGINT NOT NULL,
+      UNIQUE(user_id, ticker)
+    );
+  `);
   console.log('✅ Database tables ready');
 }
 
@@ -1349,6 +1363,93 @@ bot.onText(/\/connections (.+)/, async (msg, match) => {
   } catch (err) {
     console.error('/connections error:', err.message);
     bot.sendMessage(chatId, '⚠️ Failed to check wallet connections.');
+  }
+});
+
+// ─── /watchdev ────────────────────────────────────────────────────────────────
+
+bot.onText(/^\/watchdev$/, (msg) => bot.sendMessage(msg.chat.id, '👁️ Usage: /watchdev <ticker>\nExample: /watchdev pepe\n\nGet notified if the token\'s deployer wallet moves funds after being inactive.'));
+
+bot.onText(/\/watchdev (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const username = msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'there');
+  const ticker = match[1].trim().toUpperCase();
+
+  if (!(await gate(msg))) return;
+
+  bot.sendMessage(chatId, `👁️ Looking up deployer for *${ticker}*...`, { parse_mode: 'Markdown' });
+
+  let contract = await getTokenContract(ticker);
+  if (!contract) contract = await searchDexScreener(ticker);
+  if (!contract || !contract.address) {
+    return bot.sendMessage(chatId, `⚠️ Couldn't find *${ticker}* on-chain.`, { parse_mode: 'Markdown' });
+  }
+
+  if (contract.chain === 'sol') {
+    return bot.sendMessage(chatId, `⚠️ Dev wallet watching isn't available for Solana tokens yet — this feature currently supports ETH and BSC only.`);
+  }
+
+  const devHistory = await getDevWalletHistory(contract.chain, contract.address);
+  if (!devHistory || !devHistory.creator) {
+    return bot.sendMessage(chatId, `⚠️ Couldn't find the deployer wallet for *${ticker}*.`, { parse_mode: 'Markdown' });
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO dev_watches (user_id, chat_id, username, ticker, chain, dev_address, last_tx_hash, last_checked_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $7)
+       ON CONFLICT (user_id, ticker) DO UPDATE SET dev_address = $6, chain = $5, last_tx_hash = NULL, last_checked_at = $7`,
+      [userId, chatId, username, ticker, contract.chain, devHistory.creator, Date.now()]
+    );
+
+    bot.sendMessage(
+      chatId,
+      `👁️ Now watching *${ticker}*'s deployer wallet:\n\`${devHistory.creator}\`\n\nYou'll be notified if it moves funds after a period of inactivity.\n\nUse /mywatches to see all your watched tokens.`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch (err) {
+    console.error('/watchdev error:', err.message);
+    bot.sendMessage(chatId, '⚠️ Failed to set up dev wallet watch.');
+  }
+});
+
+// ─── /mywatches ───────────────────────────────────────────────────────────────
+
+bot.onText(/\/mywatches/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  try {
+    const r = await pool.query('SELECT id, ticker, dev_address FROM dev_watches WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+    if (r.rows.length === 0) {
+      return bot.sendMessage(chatId, '👁️ You have no dev wallet watches.\n\nUse /watchdev <ticker> to add one.');
+    }
+
+    const lines = r.rows.map((w) => `#${w.id} — *${w.ticker}* — \`${w.dev_address.slice(0, 8)}...${w.dev_address.slice(-4)}\``).join('\n');
+    bot.sendMessage(chatId, `👁️ *Your Dev Wallet Watches*\n\n${lines}\n\nUse /unwatchdev <id> to remove one.`, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error('/mywatches error:', err.message);
+    bot.sendMessage(chatId, '⚠️ Failed to fetch your watches.');
+  }
+});
+
+// ─── /unwatchdev ──────────────────────────────────────────────────────────────
+
+bot.onText(/\/unwatchdev (\d+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const watchId = parseInt(match[1]);
+
+  try {
+    const r = await pool.query('DELETE FROM dev_watches WHERE id = $1 AND user_id = $2 RETURNING ticker', [watchId, userId]);
+    if (r.rows.length === 0) {
+      return bot.sendMessage(chatId, `⚠️ Watch #${watchId} not found.`);
+    }
+    bot.sendMessage(chatId, `✅ Stopped watching *${r.rows[0].ticker}*'s dev wallet.`, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error('/unwatchdev error:', err.message);
+    bot.sendMessage(chatId, '⚠️ Failed to remove watch.');
   }
 });
 // ─── /p — PRICE ───────────────────────────────────────────────────────────────
