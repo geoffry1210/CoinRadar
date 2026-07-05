@@ -378,10 +378,11 @@ async function getDevWalletHistory(chain, address) {
   if (chain === 'sol') return null;
 
   try {
-    const baseUrl = chain === 'eth' ? 'https://api.etherscan.io/api' : 'https://api.bscscan.com/api';
+    const chainId = chain === 'eth' ? 1 : 56;
+    const baseUrl = `https://api.etherscan.io/v2/api?chainid=${chainId}`;
 
     const creatorRes = await fetchWithRetry(
-      `${baseUrl}?module=contract&action=getcontractcreation&contractaddresses=${address}&apikey=${etherscanKey}`
+      `${baseUrl}&module=contract&action=getcontractcreation&contractaddresses=${address}&apikey=${etherscanKey}`
     );
     const creatorData = await creatorRes.json();
     console.log('DevCheck creatorData:', JSON.stringify(creatorData).slice(0, 300));
@@ -393,7 +394,7 @@ async function getDevWalletHistory(chain, address) {
     }
 
     const txRes = await fetchWithRetry(
-      `${baseUrl}?module=account&action=txlist&address=${creator}&startblock=0&endblock=99999999&page=1&offset=200&sort=asc&apikey=${etherscanKey}`
+      `${baseUrl}&module=account&action=txlist&address=${creator}&startblock=0&endblock=99999999&page=1&offset=200&sort=asc&apikey=${etherscanKey}`
     );
     const txData = await txRes.json();
     console.log('DevCheck txData status:', txData?.status, 'message:', txData?.message, 'result count:', Array.isArray(txData?.result) ? txData.result.length : 'not array');
