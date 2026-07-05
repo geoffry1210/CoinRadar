@@ -1037,7 +1037,7 @@ bot.onText(/\/start/, (msg) => {
 });
 // ─── /help ────────────────────────────────────────────────────────────────────
 
-botbot.onText(/^\/help$/, (msg) => {
+bot.onText(/^\/help$/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
     `📡 *CoinRadar Help*\n\n` +
