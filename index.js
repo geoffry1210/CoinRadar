@@ -365,13 +365,57 @@ async function check24hTxVolume(address) {
   }
 }
 
-function assessSafetyRisk(verified, liquidity, mintBad) {
+function assessSafetyRisk(verified, liquidity, mintBad, devRiskFlag = false) {
   const verifiedBad  = verified.includes('⚠️') || verified.includes('❓');
   const liquidityBad = liquidity.includes('⚠️') || liquidity.includes('❓');
-  const badSignals   = [verifiedBad, liquidityBad, mintBad].filter(Boolean).length;
+  const badSignals   = [verifiedBad, liquidityBad, mintBad, devRiskFlag].filter(Boolean).length;
   if (badSignals >= 2) return '🔴 HIGH RISK';
   if (badSignals === 1) return '🟡 CAUTION';
   return '🟢 LOW RISK';
+}
+
+async function getDevWalletHistory(chain, address) {
+  if (chain === 'sol') return null; // Solana doesn't have the same deployer concept
+
+  try {
+    const baseUrl = chain === 'eth' ? 'https://api.etherscan.io/api' : 'https://api.bscscan.com/api';
+
+    // Step 1: find the contract's creator wallet
+    const creatorRes = await fetchWithRetry(
+      `${baseUrl}?module=contract&action=getcontractcreation&contractaddresses=${address}&apikey=${etherscanKey}`
+    );
+    const creatorData = await creatorRes.json();
+    const creator = creatorData?.result?.[0]?.contractCreator;
+    if (!creator) return null;
+
+    // Step 2: pull that wallet's transaction history and count contract creations
+    const txRes = await fetchWithRetry(
+      `${baseUrl}?module=account&action=txlist&address=${creator}&startblock=0&endblock=99999999&page=1&offset=200&sort=asc&apikey=${etherscanKey}`
+    );
+    const txData = await txRes.json();
+    const txs = txData?.result;
+    if (!Array.isArray(txs)) return { creator, deployCount: null };
+
+    // Contract creations show up as transactions with an empty "to" field
+    const deployments = txs.filter((tx) => tx.to === '' || tx.to === null);
+    const uniqueContracts = new Set(deployments.map((tx) => tx.contractAddress).filter(Boolean));
+
+    return {
+      creator,
+      deployCount: uniqueContracts.size,
+      firstTxDate: txs[0] ? new Date(Number(txs[0].timeStamp) * 1000) : null,
+    };
+  } catch (err) {
+    console.error('getDevWalletHistory failed:', err.message);
+    return null;
+  }
+}
+
+function assessDevRisk(deployCount) {
+  if (deployCount == null) return null;
+  if (deployCount >= 10) return '🔴 Serial deployer — this wallet has launched 10+ contracts';
+  if (deployCount >= 4) return '🟡 Repeat deployer — this wallet has launched multiple contracts';
+  return null; // 1-3 deployments is normal, don't flag
 }
 
 // ─── HOLDER ANALYSIS HELPERS ──────────────────────────────────────────────────
@@ -1131,25 +1175,28 @@ bot.onText(/\/c (.+)/, async (msg, match) => {
     return bot.sendMessage(chatId, `⚠️ Couldn't find *${ticker}* on-chain. Try the exact ticker (e.g. PEPE, not Pepecoin).`, { parse_mode: 'Markdown' });
   }
 
-  const [verified, liquidityResult, age, volume] = await Promise.all([
+  const [verified, liquidityResult, age, volume, devHistory] = await Promise.all([
     checkContractVerified(contract.chain, contract.address),
     checkLiquidity(contract.address),
     checkTokenAge(contract.chain, contract.address),
     check24hTxVolume(contract.address),
+    getDevWalletHistory(contract.chain, contract.address),
   ]);
 
+  const devRisk = devHistory ? assessDevRisk(devHistory.deployCount) : null;
   const mintBad   = verified.includes('Mint authority active') || verified.includes('Freeze authority active');
-  const riskScore = assessSafetyRisk(verified, liquidityResult.text, mintBad);
+  const riskScore = assessSafetyRisk(verified, liquidityResult.text, mintBad, !!devRisk);
   const image     = liquidityResult.image || contract.logoImage || null;
+
+  const devLine = devRisk ? `\nDev wallet: ${devRisk} (${devHistory.deployCount} contracts)\n` : '';
 
   const caption =
     `🔍 *Safety Check — ${ticker} (${contract.chain.toUpperCase()})*\n\n` +
     `Contract:  ${verified}\n` +
     `Liquidity: ${liquidityResult.text}\n` +
     `Age:       ${age}\n` +
-    `24h Vol:   ${volume}\n\n` +
+    `24h Vol:   ${volume}\n${devLine}\n` +
     `*${riskScore}*`;
-
   if (image) bot.sendPhoto(chatId, image, { caption, parse_mode: 'Markdown' });
   else bot.sendMessage(chatId, caption, { parse_mode: 'Markdown' });
 });
