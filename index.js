@@ -375,50 +375,46 @@ function assessSafetyRisk(verified, liquidity, mintBad, devRiskFlag = false) {
 }
 
 async function getDevWalletHistory(chain, address) {
-  if (chain === 'sol') return null; // Solana doesn't have the same deployer concept
+  if (chain === 'sol') return null;
 
   try {
     const baseUrl = chain === 'eth' ? 'https://api.etherscan.io/api' : 'https://api.bscscan.com/api';
 
-    // Step 1: find the contract's creator wallet
     const creatorRes = await fetchWithRetry(
       `${baseUrl}?module=contract&action=getcontractcreation&contractaddresses=${address}&apikey=${etherscanKey}`
     );
     const creatorData = await creatorRes.json();
-    const creator = creatorData?.result?.[0]?.contractCreator;
-    if (!creator) return null;
+    console.log('DevCheck creatorData:', JSON.stringify(creatorData).slice(0, 300));
 
-    // Step 2: pull that wallet's transaction history and count contract creations
+    const creator = creatorData?.result?.[0]?.contractCreator;
+    if (!creator) {
+      console.log('DevCheck: no creator found, aborting');
+      return null;
+    }
+
     const txRes = await fetchWithRetry(
       `${baseUrl}?module=account&action=txlist&address=${creator}&startblock=0&endblock=99999999&page=1&offset=200&sort=asc&apikey=${etherscanKey}`
     );
     const txData = await txRes.json();
+    console.log('DevCheck txData status:', txData?.status, 'message:', txData?.message, 'result count:', Array.isArray(txData?.result) ? txData.result.length : 'not array');
+
     const txs = txData?.result;
     if (!Array.isArray(txs)) return { creator, deployCount: null };
 
-    // Contract creations show up as transactions with an empty "to" field
     const deployments = txs.filter((tx) => tx.to === '' || tx.to === null);
     const uniqueContracts = new Set(deployments.map((tx) => tx.contractAddress).filter(Boolean));
 
-    console.log(`Dev wallet check — creator: ${creator}, deployCount: ${uniqueContracts.size}`);
+    console.log(`DevCheck complete — creator: ${creator}, deployCount: ${uniqueContracts.size}`);
     return {
       creator,
       deployCount: uniqueContracts.size,
       firstTxDate: txs[0] ? new Date(Number(txs[0].timeStamp) * 1000) : null,
     };
   } catch (err) {
-    console.error('getDevWalletHistory failed:', err.message);
+    console.error('DevCheck exception:', err.message);
     return null;
   }
 }
-
-function assessDevRisk(deployCount) {
-  if (deployCount == null) return null;
-  if (deployCount >= 10) return '🔴 Serial deployer — this wallet has launched 10+ contracts';
-  if (deployCount >= 4) return '🟡 Repeat deployer — this wallet has launched multiple contracts';
-  return null; // 1-3 deployments is normal, don't flag
-}
-
 // ─── HOLDER ANALYSIS HELPERS ──────────────────────────────────────────────────
 
 async function getEthTopHolders(address) {
