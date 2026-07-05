@@ -1030,43 +1030,87 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
     `📡 *CoinRadar is online.*\n\nYour all-in-one crypto intelligence bot.\n\n` +
-    `*/c <ticker>* — Safety check (contract, liquidity, age, tx volume)\n` +
-    `*/w <ticker>* — Top 10 holder concentration chart\n` +
-    `*/p <ticker>* — Price, market cap, 24h change\n` +
-    `*/chart <ticker> <exchange> <tf>* — Live TradingView chart\n` +
-    `*/trending*    — Top 10 trending tokens right now\n` +
-    `*/whale <ticker>* — Recent large transfers\n\n` +
-    `Free users get ${FREE_DAILY_LIMIT} checks/day. Use /upgrade for unlimited.\n` +
-    `Use /help to see all commands.`,
+    `Track prices, set alerts, check token safety, and monitor your portfolio — all from Telegram.\n\n` +
+    `Type */help* to see everything CoinRadar can do.`,
+    { parse_mode: 'Markdown' }
+  );
+});
+// ─── /help ────────────────────────────────────────────────────────────────────
+
+botbot.onText(/^\/help$/, (msg) => {
+  bot.sendMessage(
+    msg.chat.id,
+    `📡 *CoinRadar Help*\n\n` +
+    `Choose a topic for details:\n\n` +
+    `*/help market* — Price, charts & safety checks\n` +
+    `*/help alerts* — Price alerts\n` +
+    `*/help portfolio* — Portfolio tracking\n` +
+    `*/help account* — Subscription & usage\n\n` +
+    `Free users: ${FREE_DAILY_LIMIT} checks/day across /c, /w, /p, and /whale.`,
     { parse_mode: 'Markdown' }
   );
 });
 
-// ─── /help ────────────────────────────────────────────────────────────────────
+bot.onText(/\/help (.+)/, (msg, match) => {
+  const topic = match[1].trim().toLowerCase();
+  const chatId = msg.chat.id;
 
-bot.onText(/\/help/, (msg) => {
-  bot.sendMessage(
-    msg.chat.id,
-    `📡 *CoinRadar Commands*\n\n` +
-    `*/c <ticker>*     — Safety check\n` +
-    `*/w <ticker>*     — Holder concentration chart\n` +
-    `*/p <ticker>*     — Price lookup\n` +
-    `*/chart <ticker> <exchange> <tf>* — Live chart\n` +
-    `*/trending*       — Trending tokens\n` +
-    `*/whale <ticker>* — Whale transfers\n` +
-    `*/track <ticker> <amount>* — Add to portfolio\n` +
-    `*/portfolio*      — View your holdings & value\n` +
-    `*/untrack <ticker>* — Remove a holding\n` +
-    `*/alert <ticker> <price> [recurring]* — Set a price alert\n` +
-    `*/myalerts*       — View your active alerts\n` +
-    `*/myalerts*       — View your active alerts\n` +
-    `*/upgrade*        — Subscribe for unlimited checks\n` +
-    `*/mystatus*       — Your subscription & usage\n\n` +
-    `Chart example: \`/chart BTCUSDT BINANCE 1h\`\n` +
-    `Timeframes: 1m 5m 15m 1h 4h 1D 1W\n\n` +
-    `Free users: ${FREE_DAILY_LIMIT} checks/day across /c, /w, /p, and /whale.`,
-    { parse_mode: 'Markdown' }
-  );
+  if (topic === 'market') {
+    return bot.sendMessage(
+      chatId,
+      `📡 *Market Commands*\n\n` +
+      `*/c <ticker>* — Safety check (contract, liquidity, age, tx volume)\n` +
+      `*/w <ticker>* — Top 10 holder concentration chart\n` +
+      `*/p <ticker>* — Price, market cap, 24h/7d change\n` +
+      `*/chart <ticker> <exchange> <tf>* — Live TradingView chart\n` +
+      `*/trending* — Top 10 gainers right now\n` +
+      `*/whale <ticker>* — Recent large transfers\n\n` +
+      `Chart example: \`/chart BTCUSDT BINANCE 1h\`\n` +
+      `Timeframes: 1m 5m 15m 1h 4h 1D 1W`,
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  if (topic === 'alerts') {
+    return bot.sendMessage(
+      chatId,
+      `🔔 *Price Alerts*\n\n` +
+      `*/alert <ticker> <price> [recurring]* — Set an alert\n` +
+      `*/myalerts* — View your active alerts\n` +
+      `*/removealert <id>* — Cancel an alert\n\n` +
+      `Example: \`/alert BTC 70000\`\n` +
+      `Recurring example: \`/alert BTC 70000 recurring\`\n\n` +
+      `Recurring alerts fire again each time the price crosses your target, instead of only once.`,
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  if (topic === 'portfolio') {
+    return bot.sendMessage(
+      chatId,
+      `💼 *Portfolio Tracking*\n\n` +
+      `*/track <ticker> <amount>* — Add or update a holding\n` +
+      `*/portfolio* — View your holdings & total value\n` +
+      `*/untrack <ticker>* — Remove a holding\n\n` +
+      `Example: \`/track BTC 0.5\`\n\n` +
+      `Running /track again for the same ticker updates the amount instead of duplicating it.`,
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  if (topic === 'account') {
+    return bot.sendMessage(
+      chatId,
+      `👤 *Account & Subscription*\n\n` +
+      `*/upgrade* — Subscribe for unlimited checks\n` +
+      `*/mystatus* — Your subscription & usage today\n\n` +
+      `Free users: ${FREE_DAILY_LIMIT} checks/day across /c, /w, /p, and /whale.\n` +
+      `Alerts, portfolio, and trending don't count against your daily limit.`,
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  bot.sendMessage(chatId, `⚠️ Unknown help topic. Try /help to see available topics.`);
 });
 
 // ─── /c — SAFETY CHECK ────────────────────────────────────────────────────────
