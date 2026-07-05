@@ -400,6 +400,7 @@ async function getDevWalletHistory(chain, address) {
     const deployments = txs.filter((tx) => tx.to === '' || tx.to === null);
     const uniqueContracts = new Set(deployments.map((tx) => tx.contractAddress).filter(Boolean));
 
+    console.log(`Dev wallet check — creator: ${creator}, deployCount: ${uniqueContracts.size}`);
     return {
       creator,
       deployCount: uniqueContracts.size,
