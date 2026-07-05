@@ -88,6 +88,19 @@ await pool.query(`
       announcement_id TEXT PRIMARY KEY
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS holder_snapshots (
+      id SERIAL PRIMARY KEY,
+      ticker TEXT NOT NULL,
+      chain TEXT NOT NULL,
+      wallet_address TEXT NOT NULL,
+      percentage NUMERIC NOT NULL,
+      checked_at BIGINT NOT NULL
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_holder_wallet ON holder_snapshots (wallet_address);
+  `);
   
   console.log('✅ Database tables ready');
 }
@@ -1021,6 +1034,7 @@ bot.deleteMyCommands()
     { command: 'start',    description: 'Start CoinRadar' },
     { command: 'c',        description: 'Safety check — /c pepe' },
     { command: 'w',        description: 'Top 10 holder chart — /w pepe' },
+    { command: 'connections', description: 'Find shared whale wallets — /connections pepe' },
     { command: 'p',        description: 'Price lookup — /p pepe' },
     { command: 'chart',    description: 'Price chart — /chart BTCUSDT BINANCE 1h' },
     { command: 'trending', description: 'Top trending tokens right now' },
@@ -1110,7 +1124,8 @@ bot.onText(/\/help (.+)/, (msg, match) => {
     return bot.sendMessage(
       chatId,
       `📡 *Market Commands*\n\n` +
-      `*/c <ticker>* — Safety check (contract, liquidity, age, tx volume)\n` +
+      ``*/whale <ticker>* — Recent large transfers\n` +
+      `*/connections <ticker>* — Find shared whale wallets across tokens\n\n` +
       `*/w <ticker>* — Top 10 holder concentration chart\n` +
       `*/p <ticker>* — Price, market cap, 24h/7d change\n` +
       `*/chart <ticker> <exchange> <tf>* — Live TradingView chart\n` +
@@ -1227,6 +1242,18 @@ bot.onText(/\/w (.+)/, async (msg, match) => {
     }
 
     const { holders, top10Total, totalSupply } = await getTopHoldersWithPercentage(contract.chain, contract.address, ticker);
+    // Save this snapshot for cross-token wallet correlation
+    try {
+      const checkedAt = Date.now();
+      for (const h of holders) {
+        await pool.query(
+          `INSERT INTO holder_snapshots (ticker, chain, wallet_address, percentage, checked_at) VALUES ($1, $2, $3, $4, $5)`,
+          [ticker, contract.chain, h.address, h.percentage, checkedAt]
+        );
+      }
+    } catch (err) {
+      console.error('Failed to save holder snapshot:', err.message);
+           }
     const risk      = assessConcentrationRisk(top10Total);
     const chartUrl = generatePieChartUrl(holders, top10Total, ticker);
 
@@ -1248,6 +1275,82 @@ bot.onText(/\/w (.+)/, async (msg, match) => {
   }
 });
 
+// ─── /connections ─────────────────────────────────────────────────────────────
+
+bot.onText(/^\/connections$/, (msg) => bot.sendMessage(msg.chat.id, '🕸️ Usage: /connections <ticker>\nExample: /connections pepe\n\nFinds other tokens sharing the same top wallets.\n\nNote: only works on tokens someone has already run /w on.'));
+
+bot.onText(/\/connections (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const ticker = match[1].trim().toUpperCase();
+
+  if (!(await gate(msg))) return;
+
+  bot.sendMessage(chatId, `🕸️ Checking wallet connections for *${ticker}*...`, { parse_mode: 'Markdown' });
+
+  try {
+    // Get the most recent snapshot's wallets for this ticker
+    const latestCheck = await pool.query(
+      `SELECT MAX(checked_at) as latest FROM holder_snapshots WHERE ticker = $1`,
+      [ticker]
+    );
+    const latestTime = latestCheck.rows[0]?.latest;
+
+    if (!latestTime) {
+      return bot.sendMessage(
+        chatId,
+        `⚠️ No holder data found for *${ticker}*.\n\nRun */w ${ticker.toLowerCase()}* first, then try /connections again.`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    const ourWallets = await pool.query(
+      `SELECT wallet_address, percentage FROM holder_snapshots WHERE ticker = $1 AND checked_at = $2`,
+      [ticker, latestTime]
+    );
+    const walletAddresses = ourWallets.rows.map((r) => r.wallet_address);
+
+    if (walletAddresses.length === 0) {
+      return bot.sendMessage(chatId, `⚠️ No wallet data found for *${ticker}*.`, { parse_mode: 'Markdown' });
+    }
+
+    // Find these same wallets holding OTHER tokens
+    const matches = await pool.query(
+      `SELECT DISTINCT ticker, wallet_address, percentage
+       FROM holder_snapshots
+       WHERE wallet_address = ANY($1) AND ticker != $2
+       ORDER BY percentage DESC`,
+      [walletAddresses, ticker]
+    );
+
+    if (matches.rows.length === 0) {
+      return bot.sendMessage(
+        chatId,
+        `🕸️ *${ticker} Wallet Connections*\n\nNo shared top-holder wallets found with other tracked tokens yet.\n\nThis grows as more people run /w on different tokens.`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    // Group by ticker to avoid duplicate spam if a wallet appears in multiple old snapshots of the same token
+    const seen = new Set();
+    const lines = [];
+    for (const row of matches.rows) {
+      const key = `${row.ticker}-${row.wallet_address}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      lines.push(`*${row.ticker}* — \`${row.wallet_address.slice(0, 6)}...${row.wallet_address.slice(-4)}\` holds ${Number(row.percentage).toFixed(2)}%`);
+      if (lines.length >= 10) break;
+    }
+
+    bot.sendMessage(
+      chatId,
+      `🕸️ *${ticker} Wallet Connections*\n\nTop holders of ${ticker} also appear in:\n\n${lines.join('\n')}\n\n_Shared whale wallets across tokens can indicate common backers, insider coordination, or unrelated coincidence — always verify independently._`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch (err) {
+    console.error('/connections error:', err.message);
+    bot.sendMessage(chatId, '⚠️ Failed to check wallet connections.');
+  }
+});
 // ─── /p — PRICE ───────────────────────────────────────────────────────────────
 
 bot.onText(/^\/p$/, (msg) => bot.sendMessage(msg.chat.id, '💰 Include a ticker, e.g. /p pepe'));
