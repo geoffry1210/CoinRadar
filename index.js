@@ -1124,7 +1124,7 @@ bot.onText(/\/help (.+)/, (msg, match) => {
     return bot.sendMessage(
       chatId,
       `📡 *Market Commands*\n\n` +
-      ``*/whale <ticker>* — Recent large transfers\n` +
+      `*/whale <ticker>* — Recent large transfers\n` +
       `*/connections <ticker>* — Find shared whale wallets across tokens\n\n` +
       `*/w <ticker>* — Top 10 holder concentration chart\n` +
       `*/p <ticker>* — Price, market cap, 24h/7d change\n` +
