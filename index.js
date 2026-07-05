@@ -418,6 +418,13 @@ function assessSafetyRisk(verified, liquidity, mintBad, devRiskFlag = false) {
   if (badSignals === 1) return '🟡 CAUTION';
   return '🟢 LOW RISK';
 }
+
+function assessDevRisk(deployCount) {
+  if (deployCount == null) return null;
+  if (deployCount >= 10) return '🔴 Serial deployer — this wallet has launched 10+ contracts';
+  if (deployCount >= 4) return '🟡 Repeat deployer — this wallet has launched multiple contracts';
+  return null;
+}
 // ─── HOLDER ANALYSIS HELPERS ──────────────────────────────────────────────────
 
 async function getEthTopHolders(address) {
