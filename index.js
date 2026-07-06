@@ -1112,6 +1112,63 @@ async function gate(msg) {
   await recordUsage(userId);
   return true;
 }
+const PREMIUM_COMMANDS = ['chart', 'whale', 'trending', 'alert', 'track', 'portfolio', 'watchdev', 'connections'];
+const FREE_PREMIUM_TRIES = 2;
+
+async function getUserTier(userId, chatId, isGroup) {
+  if (isGroup) {
+    const r = await pool.query('SELECT expiry, tier FROM paid_chats WHERE chat_id = $1', [chatId]);
+    if (r.rows[0]?.expiry && Number(r.rows[0].expiry) > Date.now()) return r.rows[0].tier;
+  }
+  const r = await pool.query('SELECT expiry, tier FROM paid_users WHERE user_id = $1', [userId]);
+  if (r.rows[0]?.expiry && Number(r.rows[0].expiry) > Date.now()) return r.rows[0].tier;
+  return null;
+}
+
+async function premiumGate(msg, commandName) {
+  const userId  = msg.from.id;
+  const chatId  = msg.chat.id;
+  const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
+
+  if (isAdmin(userId)) return true;
+
+  const tier = await getUserTier(userId, chatId, isGroup);
+  if (tier) return true;
+
+  const day = getTodayKey();
+  const key = `premium:${commandName}`;
+  const u = await pool.query('SELECT count FROM usage_log WHERE user_id = $1 AND day = $2', [`${userId}_${key}`, day]);
+  const used = u.rows[0]?.count || 0;
+
+  if (used >= FREE_PREMIUM_TRIES) {
+    bot.sendMessage(
+      chatId,
+      `🔒 */${commandName}* is a Premium feature.\n\nYou've used your ${FREE_PREMIUM_TRIES} free daily tries. Use /upgrade for unlimited access.`,
+      { parse_mode: 'Markdown' }
+    );
+    return false;
+  }
+
+  await pool.query(
+    `INSERT INTO usage_log (user_id, day, count) VALUES ($1, $2, 1)
+     ON CONFLICT (user_id, day) DO UPDATE SET count = usage_log.count + 1`,
+    [`${userId}_${key}`, day]
+  );
+
+  const remaining = FREE_PREMIUM_TRIES - used - 1;
+  bot.sendMessage(chatId, `🎁 Free try of */${commandName}* (${remaining} left today). Use /upgrade for unlimited access.`);
+  return true;
+  }
+
+async function getUserTier(userId, chatId, isGroup) {
+  if (isGroup) {
+    const r = await pool.query('SELECT expiry, tier FROM paid_chats WHERE chat_id = $1', [chatId]);
+    if (r.rows[0]?.expiry && Number(r.rows[0].expiry) > Date.now()) return r.rows[0].tier;
+  }
+  const r = await pool.query('SELECT expiry, tier FROM paid_users WHERE user_id = $1', [userId]);
+  if (r.rows[0]?.expiry && Number(r.rows[0].expiry) > Date.now()) return r.rows[0].tier;
+  return null; // not subscribed
+}
 
 // ─── /start ───────────────────────────────────────────────────────────────────
 
