@@ -36,9 +36,11 @@ async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS paid_users (
       user_id BIGINT PRIMARY KEY,
-      expiry BIGINT NOT NULL
+      expiry BIGINT NOT NULL,
+      tier TEXT NOT NULL DEFAULT 'regular'
     );
   `);
+  await pool.query(`ALTER TABLE paid_users ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'regular';`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usage_log (
       user_id BIGINT NOT NULL,
@@ -50,9 +52,11 @@ async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS paid_chats (
       chat_id BIGINT PRIMARY KEY,
-      expiry BIGINT NOT NULL
+      expiry BIGINT NOT NULL,
+      tier TEXT NOT NULL DEFAULT 'regular'
     );
   `);
+  await pool.query(`ALTER TABLE paid_chats ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'regular';`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS seen_announcements (
       announcement_id TEXT PRIMARY KEY
@@ -197,19 +201,19 @@ async function recordUsage(userId) {
   );
 }
 
-async function setPaidUser(userId, expiry) {
+async function setPaidUser(userId, expiry, tier = 'regular') {
   await pool.query(
-    `INSERT INTO paid_users (user_id, expiry) VALUES ($1, $2)
-     ON CONFLICT (user_id) DO UPDATE SET expiry = $2`,
-    [userId, expiry]
+    `INSERT INTO paid_users (user_id, expiry, tier) VALUES ($1, $2, $3)
+     ON CONFLICT (user_id) DO UPDATE SET expiry = $2, tier = $3`,
+    [userId, expiry, tier]
   );
 }
 
-async function setPaidChat(chatId, expiry) {
+async function setPaidChat(chatId, expiry, tier = 'regular') {
   await pool.query(
-    `INSERT INTO paid_chats (chat_id, expiry) VALUES ($1, $2)
-     ON CONFLICT (chat_id) DO UPDATE SET expiry = $2`,
-    [chatId, expiry]
+    `INSERT INTO paid_chats (chat_id, expiry, tier) VALUES ($1, $2, $3)
+     ON CONFLICT (chat_id) DO UPDATE SET expiry = $2, tier = $3`,
+    [chatId, expiry, tier]
   );
 }
 
