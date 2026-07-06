@@ -1141,9 +1141,11 @@ async function premiumGate(msg, commandName) {
   const tier = await getUserTier(userId, chatId, isGroup);
   if (tier) return true;
 
-  const day = getTodayKey();
-  const key = `premium:${commandName}`;
-  const u = await pool.query('SELECT count FROM usage_log WHERE user_id = $1 AND day = $2', [`${userId}_${key}`, day]);
+const day = getTodayKey();
+  const u = await pool.query(
+    'SELECT count FROM usage_log WHERE user_id = $1 AND day = $2 AND command = $3',
+    [userId, day, commandName]
+  );
   const used = u.rows[0]?.count || 0;
 
   if (used >= FREE_PREMIUM_TRIES) {
@@ -1156,9 +1158,9 @@ async function premiumGate(msg, commandName) {
   }
 
   await pool.query(
-    `INSERT INTO usage_log (user_id, day, count) VALUES ($1, $2, 1)
-     ON CONFLICT (user_id, day) DO UPDATE SET count = usage_log.count + 1`,
-    [`${userId}_${key}`, day]
+    `INSERT INTO usage_log (user_id, day, command, count) VALUES ($1, $2, $3, 1)
+     ON CONFLICT (user_id, day, command) DO UPDATE SET count = usage_log.count + 1`,
+    [userId, day, commandName]
   );
 
   const remaining = FREE_PREMIUM_TRIES - used - 1;
