@@ -51,6 +51,8 @@ async function initDb() {
     );
   `);
   await pool.query(`ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS command TEXT NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE usage_log DROP CONSTRAINT IF EXISTS usage_log_pkey;`);
+  await pool.query(`ALTER TABLE usage_log ADD CONSTRAINT usage_log_pkey PRIMARY KEY (user_id, day, command);`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS paid_chats (
       chat_id BIGINT PRIMARY KEY,
