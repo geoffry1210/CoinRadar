@@ -45,10 +45,12 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS usage_log (
       user_id BIGINT NOT NULL,
       day TEXT NOT NULL,
+      command TEXT NOT NULL DEFAULT '',
       count INT NOT NULL DEFAULT 0,
-      PRIMARY KEY (user_id, day)
+      PRIMARY KEY (user_id, day, command)
     );
   `);
+  await pool.query(`ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS command TEXT NOT NULL DEFAULT '';`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS paid_chats (
       chat_id BIGINT PRIMARY KEY,
