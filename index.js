@@ -852,7 +852,11 @@ async function fetchWhaleTransfers(chain, address, ticker) {
           time:  new Date(tx.block_timestamp),
           hash:  tx.transaction_hash,
         }));
-        const whales = parsed.sort((a, b) => b.value - a.value).slice(0, 5);
+        // Collapse chains where the same funds hop through multiple wallets
+    // (A→B→C counted as 2 separate "whale moves" when it's really 1 actor)
+    const toAddresses = new Set(parsed.map((tx) => tx.to));
+    const filtered = parsed.filter((tx) => !toAddresses.has(tx.from));
+        const whales = filtered.sort((a, b) => b.value - a.value).slice(0, 5);
         return whales.map((tx, i) => {
           const val = tx.value >= 1e6 ? `${(tx.value / 1e6).toFixed(2)}M`
                     : tx.value >= 1e3 ? `${(tx.value / 1e3).toFixed(2)}K`
