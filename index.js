@@ -1084,17 +1084,21 @@ bot.on('successful_payment', async (msg) => {
   const userId = msg.from.id;
   const chatId = msg.chat.id;
   const payment = msg.successful_payment;
-  const isGroupPayload = payment?.invoice_payload === 'coinradar_unlimited_group';
+  const payload = payment?.invoice_payload || '';
+  const isGroupPayload = payload.includes('_group');
+  const tier = payload.includes('pro') ? 'pro' : 'regular';
   const expiry = payment?.subscription_expiration_date
     ? payment.subscription_expiration_date * 1000
     : Date.now() + 30 * 24 * 60 * 60 * 1000;
 
+  const tierLabel = tier === 'pro' ? 'Pro' : 'Regular';
+
   if (isGroupPayload) {
-    await setPaidChat(chatId, expiry);
-    bot.sendMessage(chatId, '✅ Payment successful! This group now has unlimited checks for 30 days. Thanks for supporting CoinRadar 📡');
+    await setPaidChat(chatId, expiry, tier);
+    bot.sendMessage(chatId, `✅ Payment successful! This group now has *${tierLabel}* access for 30 days. Thanks for supporting CoinRadar 📡`, { parse_mode: 'Markdown' });
   } else {
-    await setPaidUser(userId, expiry);
-    bot.sendMessage(chatId, '✅ Payment successful! You now have unlimited checks for 30 days. Thanks for supporting CoinRadar 📡');
+    await setPaidUser(userId, expiry, tier);
+    bot.sendMessage(chatId, `✅ Payment successful! You now have *${tierLabel}* access for 30 days. Thanks for supporting CoinRadar 📡`, { parse_mode: 'Markdown' });
   }
 });
 
@@ -1159,17 +1163,6 @@ async function premiumGate(msg, commandName) {
   bot.sendMessage(chatId, `🎁 Free try of */${commandName}* (${remaining} left today). Use /upgrade for unlimited access.`);
   return true;
   }
-
-async function getUserTier(userId, chatId, isGroup) {
-  if (isGroup) {
-    const r = await pool.query('SELECT expiry, tier FROM paid_chats WHERE chat_id = $1', [chatId]);
-    if (r.rows[0]?.expiry && Number(r.rows[0].expiry) > Date.now()) return r.rows[0].tier;
-  }
-  const r = await pool.query('SELECT expiry, tier FROM paid_users WHERE user_id = $1', [userId]);
-  if (r.rows[0]?.expiry && Number(r.rows[0].expiry) > Date.now()) return r.rows[0].tier;
-  return null; // not subscribed
-}
-
 // ─── /start ───────────────────────────────────────────────────────────────────
 
 bot.onText(/\/start/, (msg) => {
@@ -1269,7 +1262,6 @@ bot.onText(/^\/c$/, (msg) => bot.sendMessage(msg.chat.id, '🔍 Include a ticker
 bot.onText(/\/c (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const ticker = match[1].trim().toUpperCase();
-  if (!(await gate(msg))) return;
 
   bot.sendMessage(chatId, `🔍 Running safety check on *${ticker}*...`, { parse_mode: 'Markdown' });
 
@@ -1321,8 +1313,6 @@ bot.onText(/^\/w$/, (msg) => bot.sendMessage(msg.chat.id, '📊 Include a ticker
 bot.onText(/\/w (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const ticker = match[1].trim().toUpperCase();
-  if (!(await gate(msg))) return;
-
   bot.sendMessage(chatId, `📊 Fetching holder data for *${ticker}*...`, { parse_mode: 'Markdown' });
 
   try {
@@ -1374,7 +1364,7 @@ bot.onText(/\/connections (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const ticker = match[1].trim().toUpperCase();
 
-  if (!(await gate(msg))) return;
+  if (!(await premiumGate(msg, 'connections'))) return;
 
   bot.sendMessage(chatId, `🕸️ Checking wallet connections for *${ticker}*...`, { parse_mode: 'Markdown' });
 
@@ -1453,7 +1443,16 @@ bot.onText(/\/watchdev (.+)/, async (msg, match) => {
   const username = msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'there');
   const ticker = match[1].trim().toUpperCase();
 
-  if (!(await gate(msg))) return;
+  if (!(await premiumGate(msg, 'watchdev'))) return;
+  const tierForLimits = await getUserTier(userId, chatId, msg.chat.type === 'group' || msg.chat.type === 'supergroup');
+  if (tierForLimits !== 'pro' && !isAdmin(userId)) {
+    const countRes = await pool.query('SELECT COUNT(*) FROM dev_watches WHERE user_id = $1', [userId]);
+    const activeCount = Number(countRes.rows[0].count);
+    const maxSlots = tierForLimits === 'regular' ? 3 : 1;
+    if (activeCount >= maxSlots) {
+      return bot.sendMessage(chatId, `🔒 You've reached your limit of ${maxSlots} active dev watch${maxSlots === 1 ? '' : 'es'}.\n\nUpgrade to *Pro* for unlimited watch slots.`, { parse_mode: 'Markdown' });
+    }
+  }
 
   bot.sendMessage(chatId, `👁️ Looking up deployer for *${ticker}*...`, { parse_mode: 'Markdown' });
 
@@ -1536,7 +1535,6 @@ bot.onText(/^\/p$/, (msg) => bot.sendMessage(msg.chat.id, '💰 Include a ticker
 bot.onText(/\/p (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const ticker = match[1].trim().toUpperCase();
-  if (!(await gate(msg))) return;
 
   bot.sendMessage(chatId, `💰 Fetching price for *${ticker}*...`, { parse_mode: 'Markdown' });
 
@@ -1571,7 +1569,7 @@ bot.onText(/\/p (.+)/, async (msg, match) => {
 bot.onText(/\/trending/, async (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(chatId, `🔥 Fetching trending tokens...`);
-
+if (!(await premiumGate(msg, 'trending'))) return;
   const coins = await fetchTrending();
   if (!coins || coins.length === 0) {
     return bot.sendMessage(chatId, '⚠️ Could not fetch trending data right now. Try again shortly.');
@@ -1593,8 +1591,8 @@ bot.onText(/^\/whale$/, (msg) => bot.sendMessage(msg.chat.id, '🐋 Include a ti
 bot.onText(/\/whale (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const ticker = match[1].trim().toUpperCase();
-  if (!(await gate(msg))) return;
-
+if (!(await premiumGate(msg, 'whale'))) return;
+  
   bot.sendMessage(chatId, `🐋 Looking up whale transfers for *${ticker}*...`, { parse_mode: 'Markdown' });
 
   let contract = await getTokenContract(ticker);
@@ -1620,7 +1618,7 @@ bot.onText(/\/track (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const parts = match[1].trim().split(/\s+/);
-
+if (!(await premiumGate(msg, 'track'))) return;l
   if (parts.length < 2) {
     return bot.sendMessage(chatId, '💼 Usage: /track <ticker> <amount>\nExample: /track BTC 0.5');
   }
@@ -1685,7 +1683,7 @@ bot.onText(/\/portfolio/, async (msg) => {  const chatId = msg.chat.id;
     if (r.rows.length === 0) {
       return bot.sendMessage(chatId, '💼 You have no tracked holdings.\n\nUse /track <ticker> <amount> to add one.');
     }
-
+if (!(await premiumGate(msg, 'portfolio'))) return;
     bot.sendMessage(chatId, '💼 Fetching your portfolio...');
 
     let totalValue = 0;
@@ -1724,7 +1722,17 @@ bot.onText(/\/alert (.+)/, async (msg, match) => {
   const userId = msg.from.id;
   const username = msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'there');
   const parts = match[1].trim().split(/\s+/);
-
+if (!(await premiumGate(msg, 'alert'))) return;
+  
+  const tierForLimits = await getUserTier(userId, chatId, msg.chat.type === 'group' || msg.chat.type === 'supergroup');
+  if (tierForLimits !== 'pro' && !isAdmin(userId)) {
+    const countRes = await pool.query('SELECT COUNT(*) FROM price_alerts WHERE user_id = $1 AND triggered = FALSE', [userId]);
+    const activeCount = Number(countRes.rows[0].count);
+    const maxSlots = tierForLimits === 'regular' ? 3 : 1;
+    if (activeCount >= maxSlots) {
+      return bot.sendMessage(chatId, `🔒 You've reached your limit of ${maxSlots} active alert${maxSlots === 1 ? '' : 's'}.\n\nUpgrade to *Pro* for unlimited alert slots.`, { parse_mode: 'Markdown' });
+    }
+  }
   if (parts.length < 2) {
     return bot.sendMessage(chatId, '🔔 Usage: /alert <ticker> <target price> [recurring]\nExample: /alert BTC 70000');
   }
@@ -1824,6 +1832,8 @@ bot.onText(/\/chart (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const parts = match[1].trim().toUpperCase().split(/\s+/);
 
+  if (!(await premiumGate(msg, 'chart'))) return;
+  l
   if (parts.length < 3) {
     return bot.sendMessage(chatId, '📈 Usage: /chart <ticker> <exchange> <timeframe>\nExample: /chart BTCUSDT BINANCE 1h\n\nTimeframes: 1m 5m 15m 30m 1h 4h 1D 1W');
   }
@@ -1881,25 +1891,41 @@ bot.onText(/\/chart (.+)/, async (msg, match) => {
 bot.onText(/\/upgrade/, async (msg) => {
   const chatId  = msg.chat.id;
   const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
-  const title   = isGroup ? 'CoinRadar Unlimited — Group' : 'CoinRadar Unlimited';
-  const desc    = isGroup
-    ? 'Unlimited checks for everyone in this group. Billed monthly via Telegram Stars, cancel anytime.'
-    : 'Unlimited checks. Billed monthly via Telegram Stars, cancel anytime.';
-  const payload = isGroup ? 'coinradar_unlimited_group' : 'coinradar_unlimited';
-  const amount  = isGroup ? 2500 : 550;
-  const label   = isGroup ? 'Monthly — Group' : 'Monthly';
+
+  const regularAmount = isGroup ? 1350 : 550;
+  const proAmount     = isGroup ? 2500 : 900;
+  const scopeLabel    = isGroup ? 'Group' : 'Individual';
 
   try {
-    const link = await bot.createInvoiceLink(title, desc, payload, '', 'XTR', [{ label, amount }], { subscription_period: 2592000 });
-    bot.sendMessage(chatId, '📡 Subscribe to CoinRadar Unlimited:', {
-      reply_markup: { inline_keyboard: [[{ text: `⭐ Subscribe (${amount} Stars/mo)`, url: link }]] },
+    const regularLink = await bot.createInvoiceLink(
+      `CoinRadar Regular — ${scopeLabel}`,
+      'Unlimited use of all Premium commands. Up to 3 active alerts and 3 dev watches. Billed monthly via Telegram Stars, cancel anytime.',
+      isGroup ? 'coinradar_regular_group' : 'coinradar_regular',
+      '', 'XTR', [{ label: 'Regular — Monthly', amount: regularAmount }],
+      { subscription_period: 2592000 }
+    );
+    const proLink = await bot.createInvoiceLink(
+      `CoinRadar Pro — ${scopeLabel}`,
+      'Everything in Regular, plus unlimited alerts & dev watches, and 10-minute dev wallet check speed. Billed monthly via Telegram Stars, cancel anytime.',
+      isGroup ? 'coinradar_pro_group' : 'coinradar_pro',
+      '', 'XTR', [{ label: 'Pro — Monthly', amount: proAmount }],
+      { subscription_period: 2592000 }
+    );
+
+    bot.sendMessage(chatId, `📡 *Choose your CoinRadar plan:*\n\n*Regular* — ${regularAmount}⭐/mo\nUnlimited Premium commands, 3 alert & 3 dev-watch slots.\n\n*Pro* — ${proAmount}⭐/mo\nEverything in Regular, plus unlimited slots & faster dev-watch checks.`, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: `⭐ Regular (${regularAmount} Stars/mo)`, url: regularLink }],
+          [{ text: `⭐ Pro (${proAmount} Stars/mo)`, url: proLink }],
+        ],
+      },
     });
   } catch (err) {
     console.error('Invoice link error:', err.message);
-    bot.sendMessage(chatId, '⚠️ Something went wrong generating the subscription link. Please try again.');
+    bot.sendMessage(chatId, '⚠️ Something went wrong generating the subscription links. Please try again.');
   }
 });
-
 // ─── /mystatus ────────────────────────────────────────────────────────────────
 
 bot.onText(/\/mystatus/, async (msg) => {
