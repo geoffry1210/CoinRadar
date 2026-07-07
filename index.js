@@ -1624,7 +1624,7 @@ bot.onText(/\/track (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const parts = match[1].trim().split(/\s+/);
-if (!(await premiumGate(msg, 'track'))) return;l
+if (!(await premiumGate(msg, 'track'))) return;
   if (parts.length < 2) {
     return bot.sendMessage(chatId, '💼 Usage: /track <ticker> <amount>\nExample: /track BTC 0.5');
   }
@@ -1839,7 +1839,7 @@ bot.onText(/\/chart (.+)/, async (msg, match) => {
   const parts = match[1].trim().toUpperCase().split(/\s+/);
 
   if (!(await premiumGate(msg, 'chart'))) return;
-  l
+  
   if (parts.length < 3) {
     return bot.sendMessage(chatId, '📈 Usage: /chart <ticker> <exchange> <timeframe>\nExample: /chart BTCUSDT BINANCE 1h\n\nTimeframes: 1m 5m 15m 30m 1h 4h 1D 1W');
   }
