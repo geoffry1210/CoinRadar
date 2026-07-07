@@ -575,11 +575,12 @@ async function getTotalSupply(chain, address, ticker) {
       const data = await res.json();
       chainSupply = data.result?.value?.uiAmount || null;
     } else {
-      const baseUrl = chain === 'eth' ? 'https://api.etherscan.io/api' : 'https://api.bscscan.com/api';
-      const res = await fetchWithRetry(`${baseUrl}?module=stats&action=tokensupply&contractaddress=${address}&apikey=${etherscanKey}`);
+      const chainId = chain === 'eth' ? 1 : 56;
+      const baseUrl = `https://api.etherscan.io/v2/api?chainid=${chainId}`;
+      const res = await fetchWithRetry(`${baseUrl}&module=stats&action=tokensupply&contractaddress=${address}&apikey=${etherscanKey}`);
       const data = await res.json();
       if (data.status === '1') {
-        const dr = await fetchWithRetry(`${baseUrl}?module=token&action=tokeninfo&contractaddress=${address}&apikey=${etherscanKey}`);
+        const dr = await fetchWithRetry(`${baseUrl}&module=token&action=tokeninfo&contractaddress=${address}&apikey=${etherscanKey}`);
         const dd = await dr.json();
         const decimals = parseInt(dd.result?.[0]?.decimals || 18);
         chainSupply = parseFloat(data.result) / Math.pow(10, decimals);
