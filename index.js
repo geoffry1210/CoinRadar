@@ -368,7 +368,6 @@ async function checkLiquidity(address) {
 async function checkTokenAge(chain, address) {
   try {
     if (chain === 'sol') return '❓ Age check not available for Solana';
-    const baseUrl = chain === 'eth' ? 'https://api.etherscan.io/api' : 'https://api.bscscan.com/api';
     const chainId = chain === 'eth' ? 1 : 56;
     const baseUrl = `https://api.etherscan.io/v2/api?chainid=${chainId}`;
     const res = await fetchWithRetry(
