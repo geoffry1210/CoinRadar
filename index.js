@@ -23,6 +23,9 @@ let trendingCache = null;
 let trendingCacheTime = 0;
 const TRENDING_CACHE_TTL = 10 * 60 * 1000;
 
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection:', reason?.message || reason);
+});
 // ─── DB ──────────────────────────────────────────────────────────────────────
 
 const pool = new Pool({
