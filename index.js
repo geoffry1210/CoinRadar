@@ -71,6 +71,16 @@ async function initDb() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  await pool.query(`
+    INSERT INTO bot_settings (key, value) VALUES ('early_access_remaining', '5')
+    ON CONFLICT (key) DO NOTHING;
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS price_alerts (
       id SERIAL PRIMARY KEY,
       user_id BIGINT NOT NULL,
@@ -1177,9 +1187,47 @@ const day = getTodayKey();
   }
 // ─── /start ───────────────────────────────────────────────────────────────────
 
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  try {
+    const existing = await pool.query('SELECT 1 FROM paid_users WHERE user_id = $1', [userId]);
+    const alreadyHasRecord = existing.rows.length > 0;
+
+    const seenBefore = await pool.query('SELECT 1 FROM usage_log WHERE user_id = $1 LIMIT 1', [userId]);
+    const isNewUser = seenBefore.rows.length === 0 && !alreadyHasRecord;
+
+    if (isNewUser) {
+      const settingRes = await pool.query(`SELECT value FROM bot_settings WHERE key = 'early_access_remaining'`);
+      const remaining = parseInt(settingRes.rows[0]?.value || '0');
+
+      if (remaining > 0) {
+        const trialExpiry = Date.now() + 30 * 24 * 60 * 60 * 1000;
+        await pool.query(
+          `INSERT INTO paid_users (user_id, expiry, tier) VALUES ($1, $2, 'pro')
+           ON CONFLICT (user_id) DO UPDATE SET expiry = $2, tier = 'pro'`,
+          [userId, trialExpiry]
+        );
+        await pool.query(
+          `UPDATE bot_settings SET value = $1 WHERE key = 'early_access_remaining'`,
+          [String(remaining - 1)]
+        );
+
+        bot.sendMessage(
+          chatId,
+          `📡 *Welcome to CoinRadar!*\n\n🎉 You're one of our first users — you've been granted *30 days of free Pro access* as a thank you!\n\nTrack prices, set alerts, check token safety, and monitor your portfolio — all from Telegram.\n\nType */help* to see everything CoinRadar can do.`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('/start early-access check failed:', err.message);
+  }
+
   bot.sendMessage(
-    msg.chat.id,
+    chatId,
     `📡 *CoinRadar is online.*\n\nYour all-in-one crypto intelligence bot.\n\n` +
     `Track prices, set alerts, check token safety, and monitor your portfolio — all from Telegram.\n\n` +
     `Type */help* to see everything CoinRadar can do.`,
