@@ -1005,7 +1005,7 @@ async function checkBybitListings() {
     for (const item of items) {
       if (!item.id) continue;
       const titleLower = (item.title || '').toLowerCase();
-      const isListing = titleLower.includes('new listing') || titleLower.includes('new innovation zone') || titleLower.includes('new spot') || titleLower.includes('perpetual contract listing') || titleLower.includes('will list');
+      const isListing = titleLower.includes('listing') || titleLower.includes('listed') || titleLower.includes('will list') || titleLower.includes('new spot') || titleLower.includes('innovation zone') || titleLower.includes('perpetual contract');
       if (!isListing) continue;
       if (await hasSeenAnnouncement(item.id)) continue;
       await markAnnouncementSeen(item.id);
