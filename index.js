@@ -369,8 +369,10 @@ async function checkTokenAge(chain, address) {
   try {
     if (chain === 'sol') return '❓ Age check not available for Solana';
     const baseUrl = chain === 'eth' ? 'https://api.etherscan.io/api' : 'https://api.bscscan.com/api';
+    const chainId = chain === 'eth' ? 1 : 56;
+    const baseUrl = `https://api.etherscan.io/v2/api?chainid=${chainId}`;
     const res = await fetchWithRetry(
-      `${baseUrl}?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&page=1&offset=1&sort=asc&apikey=${etherscanKey}`
+      `${baseUrl}&module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&page=1&offset=1&sort=asc&apikey=${etherscanKey}`
     );
     const data = await res.json();
     const firstTx = data?.result?.[0];
@@ -465,7 +467,7 @@ function assessDevRisk(deployCount) {
 async function getEthTopHolders(address) {
   try {
     const res = await fetchWithRetry(
-      `https://api.etherscan.io/api?module=token&action=tokenholderlist&contractaddress=${address}&page=1&offset=10&apikey=${etherscanKey}`
+      `https://api.etherscan.io/v2/api?chainid=1&module=token&action=tokenholderlist&contractaddress=${address}&page=1&offset=10&apikey=${etherscanKey}`
     );
     const data = await res.json();
     if (data.status === '1' && Array.isArray(data.result)) {
@@ -480,7 +482,7 @@ async function getEthTopHolders(address) {
 async function getBscTopHolders(address) {
   try {
     const res = await fetchWithRetry(
-      `https://api.bscscan.com/api?module=token&action=tokenholderlist&contractaddress=${address}&page=1&offset=10&apikey=${etherscanKey}`
+      `https://api.etherscan.io/v2/api?chainid=56&module=token&action=tokenholderlist&contractaddress=${address}&page=1&offset=10&apikey=${etherscanKey}`
     );
     const data = await res.json();
     if (data.status === '1' && Array.isArray(data.result)) {
@@ -876,9 +878,10 @@ async function fetchWhaleTransfers(chain, address, ticker) {
     }
 
     // Fallback to Etherscan
-    const baseUrl = chain === 'eth' ? 'https://api.etherscan.io/api' : 'https://api.bscscan.com/api';
+    const chainId = chain === 'eth' ? 1 : 56;
+    const baseUrl = `https://api.etherscan.io/v2/api?chainid=${chainId}`;
     const res = await fetchWithRetry(
-      `${baseUrl}?module=account&action=tokentx&contractaddress=${address}&page=1&offset=50&sort=desc&apikey=${etherscanKey}`
+      `${baseUrl}&module=account&action=tokentx&contractaddress=${address}&page=1&offset=50&sort=desc&apikey=${etherscanKey}`
     );
     const data = await res.json();
     const txs = data?.result;
