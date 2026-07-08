@@ -69,7 +69,10 @@ async function initDb() {
       announcement_id TEXT PRIMARY KEY
     );
   `);
-
+await pool.query(`
+  ALTER TABLE price_alerts 
+  ADD COLUMN IF NOT EXISTS recurring BOOLEAN DEFAULT false
+`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS bot_settings (
       key TEXT PRIMARY KEY,
