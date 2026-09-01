@@ -2846,6 +2846,103 @@ async function buildHolderAnalysisData(ticker) {
   };
 }
 
+// Structured counterpart to fetchWhaleTransfers (which returns Telegram
+// markdown). Same deliberate-duplication tradeoff as buildSafetyCheckData /
+// buildHolderAnalysisData above — reuses the same data sources but returns
+// plain JSON events {time, value, from, to} for the charting site to plot
+// as timeline markers, instead of a formatted message string.
+async function buildWhaleAlertData(ticker) {
+  let contract = await getTokenContract(ticker);
+  if (!contract) contract = await searchDexScreener(ticker);
+  if (!contract || !contract.address) {
+    return { ticker, found: false };
+  }
+
+  const { chain, address } = contract;
+
+  // Solana: Helius free tier only gives signatures/timestamps, not reliable
+  // transfer amounts — so whale markers aren't currently supported for Solana.
+  if (chain === 'sol') {
+    return {
+      ticker, found: true, chain, address,
+      supported: false,
+      error: 'Whale transfer amounts require a paid Helius plan on Solana — not available yet.',
+    };
+  }
+
+  try {
+    let parsed = [];
+
+    if (moralisKey) {
+      const chainId = chain === 'eth' ? 'eth' : 'bsc';
+      const res = await fetchWithRetry(
+        `https://deep-index.moralis.io/api/v2.2/erc20/${address}/transfers?chain=${chainId}&limit=50`,
+        { headers: { 'X-API-Key': moralisKey, 'Accept': 'application/json' } }
+      );
+      const data = await res.json();
+      const txs = data?.result;
+      if (Array.isArray(txs) && txs.length > 0) {
+        parsed = txs.map((tx) => ({
+          from: tx.from_address,
+          to: tx.to_address,
+          value: parseFloat(tx.value) / Math.pow(10, parseInt(tx.token_decimals || 18)),
+          time: new Date(tx.block_timestamp),
+          hash: tx.transaction_hash,
+        }));
+      }
+    }
+
+    if (parsed.length === 0) {
+      const chainId = chain === 'eth' ? 1 : 56;
+      const baseUrl = `https://api.etherscan.io/v2/api?chainid=${chainId}`;
+      const res = await fetchWithRetry(
+        `${baseUrl}&module=account&action=tokentx&contractaddress=${address}&page=1&offset=50&sort=desc&apikey=${etherscanKey}`
+      );
+      const data = await res.json();
+      const txs = data?.result;
+      if (Array.isArray(txs) && txs.length > 0) {
+        const decimals = parseInt(txs[0]?.tokenDecimal || 18);
+        const seenHashes = new Set();
+        for (const tx of txs) {
+          if (seenHashes.has(tx.hash)) continue;
+          seenHashes.add(tx.hash);
+          parsed.push({
+            from: tx.from,
+            to: tx.to,
+            value: parseFloat(tx.value) / Math.pow(10, decimals),
+            time: new Date(Number(tx.timeStamp) * 1000),
+            hash: tx.hash,
+          });
+        }
+      }
+    }
+
+    if (parsed.length === 0) {
+      return { ticker, found: true, chain, address, supported: true, events: [] };
+    }
+
+    // Same A→B→C collapse as fetchWhaleTransfers, to avoid one real move
+    // showing up as two separate markers on the chart
+    const toAddresses = new Set(parsed.map((tx) => tx.to));
+    const filtered = parsed.filter((tx) => !toAddresses.has(tx.from));
+    const whales = filtered.sort((a, b) => b.value - a.value).slice(0, 10);
+
+    return {
+      ticker, found: true, chain, address, supported: true,
+      events: whales.map((tx) => ({
+        time: Math.floor(tx.time.getTime() / 1000), // unix seconds, matches Lightweight Charts time format
+        value: tx.value,
+        from: tx.from,
+        to: tx.to,
+        hash: tx.hash || null,
+      })),
+    };
+  } catch (err) {
+    console.error('buildWhaleAlertData failed:', err.message);
+    return { ticker, found: true, chain, address, supported: true, events: [], error: 'Whale data temporarily unavailable' };
+  }
+}
+
 const app = express();
 
 // Minimal manual CORS handling (no extra dependency) — the website will be
@@ -2892,6 +2989,17 @@ app.get('/api/holders/:ticker', async (req, res) => {
   } catch (err) {
     console.error('/api/holders error:', err.message);
     res.status(500).json({ error: 'Internal error analyzing holders' });
+  }
+});
+
+app.get('/api/whale/:ticker', async (req, res) => {
+  const ticker = req.params.ticker.trim().toUpperCase();
+  try {
+    const data = await buildWhaleAlertData(ticker);
+    res.json(data);
+  } catch (err) {
+    console.error('/api/whale error:', err.message);
+    res.status(500).json({ error: 'Internal error fetching whale data' });
   }
 });
 
